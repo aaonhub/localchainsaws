@@ -1,0 +1,6 @@
+{
+  "item.chainsaw.cut": {
+    "subtitle": "subtitles.localchainsaws.item.chainsaw.cut",
+    "sounds": ["localchainsaws:item/chainsaw_cut"]
+  }
+}

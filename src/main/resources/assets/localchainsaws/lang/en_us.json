@@ -1,0 +1,7 @@
+{
+  "item.localchainsaws.iron_chainsaw": "Iron Chainsaw",
+  "item.localchainsaws.diamond_chainsaw": "Diamond Chainsaw",
+  "item.localchainsaws.netherite_chainsaw": "Netherite Chainsaw",
+  "item.localchainsaws.chainsaw.tooltip": "Fells a whole tree (up to %s logs)",
+  "subtitles.localchainsaws.item.chainsaw.cut": "Chainsaw roars"
+}
