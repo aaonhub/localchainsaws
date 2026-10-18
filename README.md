@@ -5,7 +5,7 @@ Our own clean-room code, art and sound, MIT licensed.
 
 ## Gameplay
 
-- **Break any log of a natural tree with a chainsaw (standing, not sneaking)**: the whole tree comes down. Every log
+- **Break any log of a natural tree with a chainsaw (standing, not crouching)**: the whole tree comes down. Every log
   drops as an item through its normal loot table with the chainsaw as the tool (Fortune, Silk Touch and loot modifiers
   apply); the leaves that would now decay are broken with their decay loot (saplings, sticks, apples); everything lands
   at the stump; a sapling is replanted (four for a 2x2 trunk when four dropped).
@@ -15,9 +15,11 @@ Our own clean-room code, art and sound, MIT licensed.
   above the cut, within 12 blocks sideways, are taken. Player-placed leaves are persistent, so builds are safe.
 - Chainsaws are real `AxeItem`s (vanilla axe damage/speed for the tier): they mine wood fast, strip logs and take axe
   enchantments. Netherite is fire resistant.
-- **Sneaking** is left to [Tree Harvester](https://modrinth.com/mod/tree-harvester) (server-only on The Local): it fells
-  trees for any axe while sneaking, and chainsaws count as axes, so its `axeWhitelist` does not need them. The two never
-  both run on one break. Without Tree Harvester, sneaking chops a single log.
+- **Crouching (sneaking)** is left to [Tree Harvester](https://modrinth.com/mod/tree-harvester) (server-only on The Local): it fells
+  trees for any axe while crouching, and chainsaws count as axes, so its `axeWhitelist` does not need them. Both mods test
+  the same thing (`Player.isCrouching()`), so exactly one of them acts on a break; the self-test checks this with Tree
+  Harvester installed. Without Tree Harvester, crouching chops a single log. (If Tree Harvester's `treeHarvestWithoutSneak`
+  were ever turned on, whichever runs first takes the tree and the other finds nothing left to fell.)
 - Nether stems (no leaves) are not felled by the chainsaw itself; sneak for Tree Harvester's nether-tree support.
 
 ## Recipes
@@ -42,6 +44,6 @@ Art and sound are generated, not drawn by hand in an editor: `tools/make_texture
 (the empty gametest structure).
 
 The tests can also run inside a full modpack server: start it with
-`-Dforge.enableGameTest=true -Dforge.gameTestServer=true -Dforge.enabledGameTestNamespaces=localchainsaws`
-(it builds its own flat world, runs the tests, exits). With Tree Harvester present the sneaking test expects Tree
+`-Dlocalchainsaws.selftest=true` (Forge itself only registers gametests in a dev workspace, so this runs the same scenarios through `SelfTest`: trees in the sky around x=30000 z=30000, fake players, a `[localchainsaws-selftest] SUMMARY n/n passed` log line, then it stops the server; throwaway copies only)
+With Tree Harvester present the sneaking test expects Tree
 Harvester to fell the tree exactly once.

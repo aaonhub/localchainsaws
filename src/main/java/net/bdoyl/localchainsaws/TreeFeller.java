@@ -34,8 +34,8 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
  * loot modifiers apply), the leaves that would now decay drop what decay drops (saplings, sticks, apples), everything
  * lands at the stump, and a sapling is replanted when one dropped.
  *
- * Sneaking is left alone on purpose: on The Local, Tree Harvester (server-only) fells trees for any axe while sneaking,
- * so the two never both run on one break. Without Tree Harvester, sneaking just chops the single log.
+ * Crouching (sneaking) is left alone on purpose: on The Local, Tree Harvester (server-only) fells trees for any axe while
+ * crouching, so the two never both run on one break. Without Tree Harvester, crouching just chops the single log.
  */
 public final class TreeFeller {
     /** How far sideways from the cut log a tree may reach (acacia/jungle branches, 2x2 trunks). */
@@ -57,7 +57,8 @@ public final class TreeFeller {
     public static void onBreak(BlockEvent.BreakEvent event) {
         if (felling) return;
         if (!(event.getLevel() instanceof ServerLevel level) || !(event.getPlayer() instanceof ServerPlayer player)) return;
-        if (player.isShiftKeyDown() || player.getAbilities().instabuild) return;
+        // Same test as Tree Harvester (crouching pose, also true under a low ceiling without the key), so exactly one acts.
+        if (player.isCrouching() || player.getAbilities().instabuild) return;
         ItemStack tool = player.getMainHandItem();
         if (!(tool.getItem() instanceof ChainsawItem saw)) return;
         BlockState state = event.getState();

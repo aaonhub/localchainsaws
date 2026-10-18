@@ -41,6 +41,8 @@ public class LocalChainsaws {
         SOUNDS.register(modBus);
         modBus.addListener(this::addToTabs);
         MinecraftForge.EVENT_BUS.register(TreeFeller.class);
+        // Self-test for throwaway copies of a modpack server: see SelfTest. Never set on the live server.
+        if (Boolean.getBoolean("localchainsaws.selftest")) MinecraftForge.EVENT_BUS.register(SelfTest.class);
     }
 
     private void addToTabs(BuildCreativeModeTabContentsEvent event) {
