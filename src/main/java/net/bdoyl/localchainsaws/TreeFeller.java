@@ -47,9 +47,13 @@ public final class TreeFeller {
     /** How many logs we look at to decide "is this a natural tree" (more than any chainsaw cuts, so big trees still count). */
     static final int SCAN_LOGS = 1024;
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger("localchainsaws");
     private static final Direction[] DIRS = Direction.values();
     private static boolean felling; // server thread only: our own per-log BreakEvents must not start another felling
     private static final List<Runnable> NEXT_TICK = new ArrayList<>();
+    /** Ticks a replanted sapling can't be broken with a chainsaw: players are often still holding the button when it appears. */
+    static final int SAPLING_GRACE_TICKS = 60;
+    private static final Map<BlockPos, Long> REPLANTED = new HashMap<>(); // sapling pos -> server tick the grace ends
 
     private TreeFeller() {}
 
@@ -76,9 +80,25 @@ public final class TreeFeller {
         }
     }
 
+    /** A chainsaw swing that is still going when the sapling appears would break it again at once; ignore those briefly. */
+    @SubscribeEvent
+    public static void protectReplanted(BlockEvent.BreakEvent event) {
+        if (REPLANTED.isEmpty() || !(event.getLevel() instanceof ServerLevel level)) return;
+        Long until = REPLANTED.get(event.getPos());
+        if (until != null && level.getServer().getTickCount() < until && event.getState().is(BlockTags.SAPLINGS)
+                && event.getPlayer().getMainHandItem().getItem() instanceof ChainsawItem) {
+            event.setCanceled(true);
+        }
+    }
+
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END || NEXT_TICK.isEmpty()) return;
+        if (event.phase != TickEvent.Phase.END) return;
+        if (!REPLANTED.isEmpty()) {
+            long now = event.getServer().getTickCount();
+            REPLANTED.values().removeIf(until -> until <= now);
+        }
+        if (NEXT_TICK.isEmpty()) return;
         List<Runnable> tasks = new ArrayList<>(NEXT_TICK);
         NEXT_TICK.clear();
         tasks.forEach(Runnable::run);
@@ -152,7 +172,10 @@ public final class TreeFeller {
         }
 
         replant(level, origin, felled, drops);
-        for (ItemStack stack : merge(drops)) Block.popResource(level, origin, stack);
+        List<ItemStack> merged = merge(drops);
+        LOG.debug("{} felled {} logs + {} leaves at {} ({} found), drops {}", player.getGameProfile().getName(), felled.size(), i,
+                origin, logs.size(), merged);
+        for (ItemStack stack : merged) Block.popResource(level, origin, stack);
         level.playSound(null, origin, LocalChainsaws.CHAINSAW_CUT.get(), SoundSource.PLAYERS, 1.0F,
                 0.9F + level.random.nextFloat() * 0.2F);
     }
@@ -250,8 +273,12 @@ public final class TreeFeller {
             List<BlockPos> plant = spots;
             NEXT_TICK.add(() -> {
                 for (BlockPos pos : plant) {
-                    if (level.getBlockState(pos).isAir() && sapling.canSurvive(level, pos)) level.setBlock(pos, sapling, Block.UPDATE_ALL);
-                    else Block.popResource(level, origin, new ItemStack(item));
+                    if (level.getBlockState(pos).isAir() && sapling.canSurvive(level, pos)) {
+                        level.setBlock(pos, sapling, Block.UPDATE_ALL);
+                        REPLANTED.put(pos.immutable(), (long) level.getServer().getTickCount() + SAPLING_GRACE_TICKS);
+                    } else {
+                        Block.popResource(level, origin, new ItemStack(item));
+                    }
                 }
             });
             return;

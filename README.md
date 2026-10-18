@@ -8,7 +8,8 @@ Our own clean-room code, art and sound, MIT licensed.
 - **Break any log of a natural tree with a chainsaw (standing, not crouching)**: the whole tree comes down. Every log
   drops as an item through its normal loot table with the chainsaw as the tool (Fortune, Silk Touch and loot modifiers
   apply); the leaves that would now decay are broken with their decay loot (saplings, sticks, apples); everything lands
-  at the stump; a sapling is replanted (four for a 2x2 trunk when four dropped).
+  at the stump; a sapling is replanted (four for a 2x2 trunk when four dropped), and for 3 seconds a still-swinging
+  chainsaw can't knock the new sapling out again.
 - Caps per felling: iron 64 logs, diamond 128, netherite 256 (nearest first, so a bigger tree is cut from the bottom up).
 - 1 durability per log; it stops with 1 durability left instead of breaking.
 - Only natural trees: the logs must touch at least 4 natural (non-persistent) leaves, and only logs of the same kind
@@ -34,7 +35,7 @@ Our own clean-room code, art and sound, MIT licensed.
 ```sh
 export JAVA_HOME=~/opt/jdk-17.0.20.1+1     # any JDK 17
 ./gradlew build                            # -> build/libs/localchainsaws-1.20.1-<version>.jar
-./gradlew runGameTestServer                # 11 server-side tests: grow trees, cut them with a fake player, count drops
+./gradlew runGameTestServer                # 12 server-side tests: grow trees, cut them with a fake player, count drops
 ```
 
 ![The three chainsaws](docs/preview.png)

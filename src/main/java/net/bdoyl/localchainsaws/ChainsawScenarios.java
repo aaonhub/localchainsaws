@@ -54,6 +54,7 @@ final class ChainsawScenarios {
         ALL.put("sneaking_leaves_it_to_tree_harvester", new Scenario(ChainsawScenarios::sneakingLeavesItToTreeHarvester, 200));
         ALL.put("ignores_player_built_logs", new Scenario(ChainsawScenarios::ignoresPlayerBuiltLogs, 100));
         ALL.put("stops_before_the_tool_breaks", new Scenario(ChainsawScenarios::stopsBeforeTheToolBreaks, 100));
+        ALL.put("replanted_sapling_survives_a_held_swing", new Scenario(ChainsawScenarios::replantedSaplingSurvivesAHeldSwing, 140));
         ALL.put("neighbour_tree_keeps_its_leaves", new Scenario(ChainsawScenarios::neighbourTreeKeepsItsLeaves, 100));
     }
 
@@ -256,6 +257,32 @@ final class ChainsawScenarios {
             h.check(logsLeft == otherLogs, "the other tree should keep all " + otherLogs + " logs, found " + logsLeft);
             h.check(leavesLeft >= 20, "the other tree lost its leaves (" + leavesLeft + " left)");
             h.pass();
+        });
+    }
+
+    /**
+     * A fancy oak (~200 leaves, so a sapling nearly always drops) is replanted; the player's chainsaw, still swinging,
+     * can't knock the new sapling out during the grace period, but can afterwards.
+     */
+    static void replantedSaplingSurvivesAHeldSwing(TestArena h) {
+        floor(h);
+        grow(h, TreeFeatures.FANCY_OAK, BASE, 12);
+        FakePlayer p = player(h, "lcs-replant", new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get()), false);
+        cut(h, p, BASE);
+        h.later(3, () -> {
+            if (!h.getBlockState(BASE).is(BlockTags.SAPLINGS)) {
+                h.check(dropped(h, Items.OAK_SAPLING) == 0, "a sapling dropped but was not replanted");
+                LOG.info("[localchainsaws-test] replant: no sapling dropped this time, nothing to check");
+                h.pass();
+                return;
+            }
+            h.check(!tryCut(h, p, BASE), "the chainsaw broke the fresh sapling during the grace period");
+            h.check(h.getBlockState(BASE).is(BlockTags.SAPLINGS), "the sapling is gone");
+            h.later(TreeFeller.SAPLING_GRACE_TICKS + 5, () -> {
+                h.check(tryCut(h, p, BASE), "after the grace period the sapling should break normally");
+                LOG.info("[localchainsaws-test] replant: sapling kept during the grace period, breakable after");
+                h.pass();
+            });
         });
     }
 }
