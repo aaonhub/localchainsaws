@@ -35,6 +35,8 @@ export JAVA_HOME=~/opt/jdk-17.0.20.1+1     # any JDK 17
 ./gradlew runGameTestServer                # 11 server-side tests: grow trees, cut them with a fake player, count drops
 ```
 
+![The three chainsaws](docs/preview.png)
+
 Art and sound are generated, not drawn by hand in an editor: `tools/make_textures.py [preview.png]` (16x16 sprites),
 `tools/make_sound.py` (synthesized two-stroke engine + chain grind, Ogg Vorbis via ffmpeg), `tools/make_arena.py`
 (the empty gametest structure).
