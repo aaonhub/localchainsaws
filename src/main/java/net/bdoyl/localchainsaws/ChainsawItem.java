@@ -7,6 +7,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
@@ -14,6 +15,7 @@ import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Tier;
 import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraftforge.client.extensions.common.IClientItemExtensions;
 import org.jetbrains.annotations.Nullable;
@@ -53,6 +55,20 @@ public class ChainsawItem extends AxeItem {
         player.startUsingItem(hand);
         ChainsawCombat.revUp(level, player);
         return InteractionResultHolder.consume(stack);
+    }
+
+    /**
+     * Right-click on a log of a natural tree revs into it (see {@link #use}) instead of stripping it: otherwise the first
+     * click would strip the trunk and the tree could no longer be felled. Logs of builds strip as with any axe.
+     */
+    @Override
+    public InteractionResult useOn(UseOnContext context) {
+        Player player = context.getPlayer();
+        if (player != null && ChainsawCombat.canStartRev(player, context.getItemInHand(), context.getHand())
+                && TreeFeller.isNaturalTree(context.getLevel(), context.getClickedPos(), context.getLevel().getBlockState(context.getClickedPos()))) {
+            return InteractionResult.PASS;
+        }
+        return super.useOn(context);
     }
 
     @Override

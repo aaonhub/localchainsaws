@@ -81,6 +81,13 @@ final class ChainsawScenarios {
         ALL.put("rev_stops_at_one_durability", new Scenario(ChainsawScenarios::revStopsAtOneDurability, 100));
         ALL.put("rev_starts_anywhere_and_breaks_no_blocks", new Scenario(ChainsawScenarios::revStartsAnywhereAndBreaksNoBlocks, 80));
         ALL.put("felling_still_works_after_revving", new Scenario(ChainsawScenarios::fellingStillWorksAfterRevving, 100));
+        // Revved into a tree (ChainsawCombat.sawLog).
+        ALL.put("rev_fells_a_tree_and_saws_mobs_meanwhile", new Scenario(ChainsawScenarios::revFellsATreeAndSawsMobsMeanwhile, 100));
+        ALL.put("rev_cut_needs_continuous_aim", new Scenario(ChainsawScenarios::revCutNeedsContinuousAim, 100));
+        ALL.put("rev_cut_respects_the_cap", new Scenario(ChainsawScenarios::revCutRespectsTheCap, 100));
+        ALL.put("rev_cut_never_breaks_the_saw", new Scenario(ChainsawScenarios::revCutNeverBreaksTheSaw, 100));
+        ALL.put("rev_leaves_player_built_logs_alone", new Scenario(ChainsawScenarios::revLeavesPlayerBuiltLogsAlone, 100));
+        ALL.put("rev_cut_while_sneaking_leaves_it_to_tree_harvester", new Scenario(ChainsawScenarios::revCutWhileSneakingLeavesItToTreeHarvester, 200));
     }
 
     private ChainsawScenarios() {}
@@ -406,6 +413,177 @@ final class ChainsawScenarios {
         });
     }
 
+    /** Where the trees for the rev cut tests stand: 1.5 blocks in front (south) of the fighter, within the chain's reach. */
+    private static final BlockPos TRUNK = BASE.offset(0, 0, 2);
+
+    /** Aim at the near face of the log at {@code rel}, a little above its middle, as a player sawing into it would. */
+    private static void aimAt(TestArena h, Fighter p, BlockPos rel) {
+        BlockPos at = h.abs(rel);
+        p.lookAt(EntityAnchorArgument.Anchor.EYES, new Vec3(at.getX() + 0.5, at.getY() + 0.6, at.getZ()));
+    }
+
+    private static boolean isLog(TestArena h, BlockPos rel) {
+        return h.getBlockState(rel).is(BlockTags.LOGS);
+    }
+
+    /**
+     * Revved with the crosshair on an oak's trunk 1.5 blocks away: nothing happens to it during the wind-up and the first
+     * {@link ChainsawCombat#CUT_TICKS} - 1 revved ticks, then the whole tree comes down exactly as from a left-click (all
+     * logs as items, leaves gone, sapling replanted, 1 durability per log), while a pig beside the trunk, inside the
+     * cone, is sawn all the while.
+     */
+    static void revFellsATreeAndSawsMobsMeanwhile(TestArena h) {
+        floor(h);
+        grow(h, TreeFeatures.OAK, TRUNK, 13);
+        int logs = countLogs(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-rev-tree", tool);
+        aimAt(h, p, TRUNK);
+        Pig pig = mobAt(h, EntityType.PIG, p, -0.9, 1.0);
+        // The real path: right-click on the trunk itself revs into it, it doesn't strip it.
+        BlockPos at = h.abs(TRUNK);
+        InteractionResult onTrunk = p.rightClickBlock(new BlockHitResult(new Vec3(at.getX() + 0.5, at.getY() + 0.6, at.getZ()), Direction.NORTH, at, false));
+        h.check(onTrunk.consumesAction() && p.isUsingItem(), "right-click on a tree's trunk should start the rev");
+        h.check(h.getBlockState(TRUNK).is(Blocks.OAK_LOG), "right-click on a tree's trunk should not strip it");
+        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS - 1);
+        boolean standing = isLog(h, TRUNK);
+        p.holdUse(1);
+        boolean cut = !isLog(h, TRUNK);
+        int bites = effects(pig)[1];
+        p.releaseUsingItem();
+        h.later(5, () -> {
+            int got = dropped(h, Items.OAK_LOG);
+            LOG.info("[localchainsaws-test] rev into an oak: still standing 1 tick before the cut {}, cut on time {}, {} logs grown -> {} dropped, "
+                    + "{} logs / {} leaves left, stump {}, pig bitten {} times, durability {}", standing, cut, logs, got, countLogs(h), countLeaves(h),
+                    h.getBlockState(TRUNK).getBlock(), bites, tool.getDamageValue());
+            h.check(standing, "the log should hold until the chain has been in it for " + ChainsawCombat.CUT_TICKS + " ticks");
+            h.check(cut, "the log should be cut after " + ChainsawCombat.CUT_TICKS + " revved ticks on it");
+            h.check(got == logs && countLogs(h) == 0 && countLeaves(h) == 0, "the whole oak should come down as items, dropped " + got + "/" + logs);
+            h.check(h.getBlockState(TRUNK).is(BlockTags.SAPLINGS) || dropped(h, Items.OAK_SAPLING) == 0, "a dropped sapling should be replanted");
+            h.check(bites == 3 && hurt(pig), "the pig in the cone should be bitten every 5 ticks meanwhile (3 times), was " + bites);
+            h.check(tool.getDamageValue() == logs + bites, "1 durability per log and per bite: expected " + (logs + bites) + ", got " + tool.getDamageValue());
+            h.pass();
+        });
+    }
+
+    /** The cut starts over when the player lets go or looks away, like mining a block. */
+    static void revCutNeedsContinuousAim(TestArena h) {
+        floor(h);
+        grow(h, TreeFeatures.OAK, TRUNK, 14);
+        int logs = countLogs(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-rev-aim", tool);
+        aimAt(h, p, TRUNK);
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS - 1);
+        p.releaseUsingItem();
+        h.check(isLog(h, TRUNK), "1 tick short of the cut time the log should stand");
+        h.check(p.rev(), "right-click again");
+        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS - 1);
+        h.check(isLog(h, TRUNK), "letting go should have started the cut over");
+        p.face(90, 0); // a glance to the side for one tick
+        p.holdUse(1);
+        aimAt(h, p, TRUNK);
+        p.holdUse(ChainsawCombat.CUT_TICKS - 1);
+        h.check(isLog(h, TRUNK), "looking away should have started the cut over");
+        p.holdUse(1);
+        h.check(!isLog(h, TRUNK), "after a full uninterrupted cut the log should go");
+        p.releaseUsingItem();
+        h.later(5, () -> {
+            int got = dropped(h, Items.OAK_LOG);
+            LOG.info("[localchainsaws-test] rev cut aim: {} logs grown -> {} dropped, durability {}", logs, got, tool.getDamageValue());
+            h.check(got == logs && countLogs(h) == 0, "the whole oak should come down, dropped " + got + "/" + logs);
+            h.check(tool.getDamageValue() == logs, "1 durability per log, no bites: expected " + logs + ", got " + tool.getDamageValue());
+            h.pass();
+        });
+    }
+
+    /** Revving into a 96-log trunk with an iron chainsaw takes 64 from the bottom, like a left-click. */
+    static void revCutRespectsTheCap(TestArena h) {
+        floor(h);
+        bigTrunk(h, TRUNK);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-rev-cap", tool);
+        aimAt(h, p, TRUNK);
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS);
+        p.releaseUsingItem();
+        h.later(5, () -> {
+            int got = dropped(h, Items.JUNGLE_LOG);
+            LOG.info("[localchainsaws-test] rev cap: 96 logs, iron chainsaw revved -> {} dropped, {} left, damage {}", got, countLogs(h), tool.getDamageValue());
+            h.check(got == 64 && countLogs(h) == 32, "iron should stop at 64 logs, dropped " + got);
+            h.check(tool.getDamageValue() == 64, "expected 64 damage, got " + tool.getDamageValue());
+            h.pass();
+        });
+    }
+
+    /** A nearly worn chainsaw revved into a tree cuts what it can, ends on 1 durability and stops revving. */
+    static void revCutNeverBreaksTheSaw(TestArena h) {
+        floor(h);
+        grow(h, TreeFeatures.OAK, TRUNK, 9);
+        ItemStack tool = new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get());
+        tool.setDamageValue(tool.getMaxDamage() - 4);
+        Fighter p = fighter(h, "lcs-rev-worn-tree", tool);
+        aimAt(h, p, TRUNK);
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS + 20);
+        boolean revving = p.isUsingItem();
+        p.releaseUsingItem();
+        h.later(5, () -> {
+            int got = dropped(h, Items.OAK_LOG), left = tool.getMaxDamage() - tool.getDamageValue();
+            LOG.info("[localchainsaws-test] rev worn on a tree: {} logs dropped, {} durability left, still revving {}", got, left, revving);
+            h.check(!tool.isEmpty() && left == 1, "the chainsaw should end on 1 durability, has " + left);
+            h.check(got == 3, "expected 3 logs (2 extra + the cut one), got " + got);
+            h.check(!revving, "the rev should stop by itself at 1 durability");
+            h.pass();
+        });
+    }
+
+    /** A log column with player-placed leaves is a build: revving into it for 2 s leaves it whole and costs nothing. */
+    static void revLeavesPlayerBuiltLogsAlone(TestArena h) {
+        floor(h);
+        for (int y = 1; y <= 5; y++) h.setBlock(TRUNK.atY(y), Blocks.OAK_LOG);
+        BlockState placed = Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.PERSISTENT, true);
+        for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) for (int y = 4; y <= 6; y++) {
+            BlockPos p = TRUNK.offset(dx, 0, dz).atY(y);
+            if (!h.getBlockState(p).is(Blocks.OAK_LOG)) h.setBlock(p, placed);
+        }
+        ItemStack tool = new ItemStack(LocalChainsaws.NETHERITE_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-rev-build", tool);
+        aimAt(h, p, TRUNK);
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + 40);
+        p.releaseUsingItem();
+        LOG.info("[localchainsaws-test] rev at a build: {} of 5 logs left, durability {}", countLogs(h), tool.getDamageValue());
+        h.check(countLogs(h) == 5 && dropped(h, Items.OAK_LOG) == 0, "revving should not cut into a player-built log column");
+        h.check(tool.getDamageValue() == 0, "and cost nothing, cost " + tool.getDamageValue());
+        h.pass();
+    }
+
+    /** Revving into a tree while sneaking: the same split as a left-click (Tree Harvester fells it once, else one log). */
+    static void revCutWhileSneakingLeavesItToTreeHarvester(TestArena h) {
+        floor(h);
+        grow(h, TreeFeatures.OAK, TRUNK, 8);
+        int logs = countLogs(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-rev-sneak", tool);
+        p.setShiftKeyDown(true);
+        p.setPose(net.minecraft.world.entity.Pose.CROUCHING); // a fake player never ticks its pose
+        aimAt(h, p, TRUNK);
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS);
+        p.releaseUsingItem();
+        boolean th = ModList.get().isLoaded("treeharvester");
+        h.later(100, () -> {
+            int got = dropped(h, Items.OAK_LOG);
+            LOG.info("[localchainsaws-test] rev while sneaking (treeharvester loaded: {}): {} logs grown -> {} dropped, {} left", th, logs, got, countLogs(h));
+            h.check(got <= logs, "more logs dropped than the tree had: something felled it twice");
+            if (th) h.check(got == logs, "Tree Harvester should fell the whole tree when sneaking, got " + got + "/" + logs);
+            else h.check(got == 1, "sneaking should chop just one log, got " + got);
+            h.pass();
+        });
+    }
+
     private static void floor(TestArena h) {
         for (int x = 0; x < 21; x++) for (int z = 0; z < 21; z++) h.setBlock(new BlockPos(x, 0, z), Blocks.GRASS_BLOCK);
     }
@@ -518,13 +696,7 @@ final class ChainsawScenarios {
     /** A 2x2 trunk of 96 logs: the iron chainsaw takes 64 from the bottom (1 durability each) and leaves the rest standing. */
     static void ironStopsAtItsCap(TestArena h) {
         floor(h);
-        BlockState leaf = Blocks.JUNGLE_LEAVES.defaultBlockState().setValue(LeavesBlock.DISTANCE, 1);
-        for (int y = 1; y <= 24; y++) for (int dx = 0; dx <= 1; dx++) for (int dz = 0; dz <= 1; dz++) h.setBlock(BASE.offset(dx, 0, dz).atY(y), Blocks.JUNGLE_LOG);
-        for (int dx = -1; dx <= 2; dx++) for (int dz = -1; dz <= 2; dz++) {
-            BlockPos p = BASE.offset(dx, 0, dz).atY(25);
-            h.setBlock(p, leaf);
-            if (dx < 0 || dx > 1 || dz < 0 || dz > 1) h.setBlock(p.below(), leaf);
-        }
+        bigTrunk(h, BASE);
         ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
         cut(h, player(h, "lcs-cap", tool, false), BASE);
         h.later(5, () -> {
@@ -535,6 +707,17 @@ final class ChainsawScenarios {
             h.check(tool.getDamageValue() == 64, "expected 64 damage, got " + tool.getDamageValue());
             h.pass();
         });
+    }
+
+    /** A 2x2 jungle trunk 24 logs tall (96 logs) with a natural canopy, its corner at {@code at}. */
+    private static void bigTrunk(TestArena h, BlockPos at) {
+        BlockState leaf = Blocks.JUNGLE_LEAVES.defaultBlockState().setValue(LeavesBlock.DISTANCE, 1);
+        for (int y = 1; y <= 24; y++) for (int dx = 0; dx <= 1; dx++) for (int dz = 0; dz <= 1; dz++) h.setBlock(at.offset(dx, 0, dz).atY(y), Blocks.JUNGLE_LOG);
+        for (int dx = -1; dx <= 2; dx++) for (int dz = -1; dz <= 2; dz++) {
+            BlockPos p = at.offset(dx, 0, dz).atY(25);
+            h.setBlock(p, leaf);
+            if (dx < 0 || dx > 1 || dz < 0 || dz > 1) h.setBlock(p.below(), leaf);
+        }
     }
 
     /** Sneaking: the chainsaw does nothing special. With Tree Harvester installed it fells the tree instead (once, not twice). */

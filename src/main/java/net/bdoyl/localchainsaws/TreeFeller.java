@@ -18,6 +18,7 @@ import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -80,6 +81,16 @@ public final class TreeFeller {
         }
     }
 
+    /**
+     * Would breaking this log fell a tree (rather than chop one log of something player-built)? Same test as
+     * {@link #onBreak}; works on the client too (leaves' "persistent" flag is part of the synced block state).
+     */
+    static boolean isNaturalTree(Level level, BlockPos pos, BlockState state) {
+        if (!state.is(BlockTags.LOGS)) return false;
+        List<BlockPos> tree = findLogs(level, pos, state.getBlock(), SCAN_LOGS);
+        return tree.size() >= 2 && hasNaturalLeaves(level, tree);
+    }
+
     /** A chainsaw swing that is still going when the sapling appears would break it again at once; ignore those briefly. */
     @SubscribeEvent
     public static void protectReplanted(BlockEvent.BreakEvent event) {
@@ -105,7 +116,7 @@ public final class TreeFeller {
     }
 
     /** Connected logs of the same block, nearest first, never below the cut, at most {@code max} (the cut log included). */
-    static List<BlockPos> findLogs(ServerLevel level, BlockPos origin, Block block, int max) {
+    static List<BlockPos> findLogs(Level level, BlockPos origin, Block block, int max) {
         List<BlockPos> found = new ArrayList<>();
         Set<BlockPos> seen = new HashSet<>();
         ArrayDeque<BlockPos> queue = new ArrayDeque<>();
@@ -132,7 +143,7 @@ public final class TreeFeller {
         return state.is(BlockTags.LEAVES) && state.hasProperty(LeavesBlock.PERSISTENT) && !state.getValue(LeavesBlock.PERSISTENT);
     }
 
-    static boolean hasNaturalLeaves(ServerLevel level, List<BlockPos> logs) {
+    static boolean hasNaturalLeaves(Level level, List<BlockPos> logs) {
         Set<BlockPos> leaves = new HashSet<>();
         for (BlockPos log : logs) {
             for (Direction d : DIRS) {

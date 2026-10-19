@@ -5,6 +5,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.WeakHashMap;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
@@ -12,6 +15,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
@@ -31,7 +35,9 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -45,7 +51,9 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
  * right-click anywhere starts the engine: a rev-up and a puff of smoke, {@link #WINDUP} ticks of wind-up, then every
  * {@link #REV_INTERVAL} ticks the chain saws up to {@link #MAX_TARGETS} living things in a narrow {@link #CONE_DEGREES}
  * cone in front of the player within a short {@link #REACH} (shorter than a normal hit). Each one takes slightly more
- * than axe DPS ({@link #REV_DPS_FACTOR}) and costs 1 durability, never below 1 durability. Letting go winds it down. All server side; the sound and particles are broadcast to
+ * than axe DPS ({@link #REV_DPS_FACTOR}) and costs 1 durability, never below 1 durability. Meanwhile a log of a natural
+ * tree under the crosshair within the same reach is sawn into: after {@link #CUT_TICKS} ticks on it, it is broken
+ * exactly as a left-click would break it, so the tree fells as usual (see TreeFeller). Letting go winds it down. All server side; the sound and particles are broadcast to
  * everyone nearby, and the rev loop is played by each client for every player it sees revved up (the "using an item"
  * flag is synced vanilla entity data), see ChainsawClient.
  */
@@ -65,6 +73,8 @@ public final class ChainsawCombat {
     static final double CONE_DEGREES = 45.0;
     /** Most things sawn per sweep: the one under the crosshair first, then the nearest. */
     static final int MAX_TARGETS = 3;
+    /** Ticks of revved, continuous aim at a log of a natural tree before it is cut through and the tree comes down. */
+    static final int CUT_TICKS = 15;
     private static final double CONE_COS = Math.cos(Math.toRadians(CONE_DEGREES / 2));
 
     static final ResourceKey<DamageType> CHAINSAW_DAMAGE =
@@ -74,11 +84,24 @@ public final class ChainsawCombat {
             TagKey.create(Registries.ENTITY_TYPE, new ResourceLocation(LocalChainsaws.MODID, "bloodless"));
 
     private static LivingEntity revTarget; // server thread only: the entity a rev hit is being applied to right now
+    private static final Map<ServerPlayer, Cut> CUTS = new WeakHashMap<>(); // server thread only: the log each player is sawing into
+
+    /** A log being sawn into: where, whether it belongs to a natural tree (checked once), and for how many ticks so far. */
+    private static final class Cut {
+        final BlockPos pos;
+        final boolean natural;
+        int ticks;
+
+        Cut(BlockPos pos, boolean natural) {
+            this.pos = pos;
+            this.natural = natural;
+        }
+    }
 
     /** Effects per target entity id, only kept while the test scenarios run. */
     static boolean recordEffects;
     static final Map<Integer, int[]> EFFECTS = new HashMap<>(); // {melee hits, rev hits, with blood}
-    static final Map<Integer, int[]> ENGINE = new HashMap<>(); // per player id: {rev-ups, revved, rev-downs}
+    static final Map<Integer, int[]> ENGINE = new HashMap<>(); // per player id: {rev-ups, revved, rev-downs, logs cut}
 
     private ChainsawCombat() {}
 
@@ -102,31 +125,38 @@ public final class ChainsawCombat {
                 SoundSource.PLAYERS, 0.9F, 1.0F);
         if (level instanceof ServerLevel server) {
             puff(server, player, 5, 0.02);
-            if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[3])[0]++;
+            if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[4])[0]++;
         }
     }
 
     /** Right-click let go (or the rev stopped): the engine winds down, unless it was only a tap. */
     static void revDown(ServerPlayer player, int ticksUsed) {
+        stopCut(player);
         if (ticksUsed < WINDUP / 2) return;
         ServerLevel level = player.serverLevel();
         level.playSound(null, player.getX(), player.getY(), player.getZ(), LocalChainsaws.CHAINSAW_REV_DOWN.get(),
                 SoundSource.PLAYERS, 0.9F, 1.0F);
         puff(level, player, 3, 0.01);
-        if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[3])[2]++;
+        if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[4])[2]++;
     }
 
     /** Called every tick the player holds right-click with a chainsaw (server side). */
     static void revTick(ServerPlayer player, ItemStack stack, int ticksUsed) {
         if (ticksUsed == WINDUP) {
             puff(player.serverLevel(), player, 8, 0.04); // revved up: the exhaust coughs
-            if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[3])[1]++;
+            if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[4])[1]++;
         }
-        if (ticksUsed < WINDUP || (ticksUsed - WINDUP) % REV_INTERVAL != 0) return;
+        if (ticksUsed < WINDUP) return;
         if (!hasFuel(stack)) {
             player.stopUsingItem();
             return;
         }
+        sawLog(player);
+        if (!hasFuel(stack)) { // a felled tree can use it down to 1
+            player.stopUsingItem();
+            return;
+        }
+        if ((ticksUsed - WINDUP) % REV_INTERVAL != 0) return;
         LivingEntity last = null;
         for (LivingEntity target : targetsInReach(player)) {
             if (bite(player, stack, target)) last = target;
@@ -139,6 +169,57 @@ public final class ChainsawCombat {
             player.swing(InteractionHand.MAIN_HAND, true);
         }
         if (!hasFuel(stack)) player.stopUsingItem(); // stops on 1 durability, never breaks
+    }
+
+    /**
+     * Revved up with a log of a natural tree under the crosshair within {@link #REACH}: saw into it (cracks and sawdust
+     * everyone sees), and after {@link #CUT_TICKS} ticks on the same log break it the way a left-click does: mining starts
+     * (Tree Harvester's cue when crouching), then the player breaks the block, so felling, caps, drops, replanting,
+     * durability and claims all work exactly as for a left-click. Looking away or letting go starts the cut over.
+     * Logs of something player-built are left alone: right-click never breaks a build.
+     */
+    private static void sawLog(ServerPlayer player) {
+        ServerLevel level = player.serverLevel();
+        Vec3 eye = player.getEyePosition();
+        BlockHitResult hit = level.clip(new ClipContext(eye, eye.add(player.getViewVector(1.0F).scale(REACH)),
+                ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+        BlockPos pos = hit.getBlockPos();
+        BlockState state = level.getBlockState(pos);
+        if (hit.getType() != HitResult.Type.BLOCK || !state.is(BlockTags.LOGS) || !level.mayInteract(player, pos)
+                || targetInReach(player, REACH) != null) { // a mob in front of the log takes the chain instead
+            stopCut(player);
+            return;
+        }
+        Cut cut = CUTS.get(player);
+        if (cut == null || !cut.pos.equals(pos)) {
+            stopCut(player);
+            cut = new Cut(pos.immutable(), TreeFeller.isNaturalTree(level, pos, state));
+            CUTS.put(player, cut);
+        }
+        if (!cut.natural) return;
+        cut.ticks++;
+        Vec3 at = hit.getLocation();
+        if (cut.ticks % 2 == 1) level.sendParticles(new BlockParticleOption(ParticleTypes.BLOCK, state), at.x, at.y, at.z, 4, 0.05, 0.05, 0.05, 0.15);
+        if (cut.ticks % REV_INTERVAL == 1) player.swing(InteractionHand.MAIN_HAND, true); // others see it bite into the wood
+        if (cut.ticks < CUT_TICKS) {
+            level.destroyBlockProgress(crackId(player), pos, cut.ticks * 10 / CUT_TICKS);
+            return;
+        }
+        stopCut(player);
+        player.getDigSpeed(state, pos); // mining starts, as with a left-click (Tree Harvester waits for this)
+        player.gameMode.destroyBlock(pos);
+        if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[4])[3]++;
+    }
+
+    /** Forget the log being sawn and take its cracks away. */
+    private static void stopCut(ServerPlayer player) {
+        Cut cut = CUTS.remove(player);
+        if (cut != null && cut.ticks > 0) player.serverLevel().destroyBlockProgress(crackId(player), cut.pos, -1);
+    }
+
+    /** The cracks need an id of their own: the server doesn't send a player the cracks of their own mining. */
+    private static int crackId(Player player) {
+        return ~player.getId();
     }
 
     /** One rev hit on one target; true if it landed (1 durability, food, sparks/blood). */

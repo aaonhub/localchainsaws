@@ -33,7 +33,7 @@ Our own clean-room code, art and sound, MIT licensed.
   held, the chain saws **what's right in front of you** every 5 ticks (4 times a second): up to 3 living things
   (the one under the crosshair first, then the nearest) whose hitbox is within 2 blocks (shorter than a normal hit's 3)
   inside a narrow 45° cone around where you look, not behind a block. These numbers (wind-up, interval, damage factor,
-  reach, cone, max targets) are the tuning constants at the top of `ChainsawCombat`.
+  reach, cone, max targets, cut time) are the tuning constants at the top of `ChainsawCombat`.
   Letting go winds the engine down (rev-down sound, a little smoke); press again for a new wind-up.
   - Each thing sawn takes 1.1x the damage per second of perfectly timed axe swings (axe damage incl.
     Sharpness/Smite/Strength x attack speed), so iron ~8.9, diamond ~9.9, netherite ~11 per second against no armour,
@@ -44,10 +44,17 @@ Our own clean-room code, art and sound, MIT licensed.
   - Bites don't knock the target back (it stays in the chain), use up the swing cooldown (rev-then-swing is no faster),
     respect the usual attack checks (PvP setting, claim/protection mods via `AttackEntityEvent`, shields block them),
     and kills read "X was shredded by Y" (damage type `localchainsaws:chainsaw`).
-  - Right-click still does what the block does first: a log is stripped (no rev), a chest opens; anything without a
-    right-click use of its own (stone, grass, air) revs. Revving never breaks blocks. With a **shield in the off hand**
-    right-click keeps blocking. Left-click felling and the crouch / Tree Harvester split are unchanged. You walk slowly
-    while revving, like drawing a bow.
+  - **Revved into a tree:** with the crosshair on a log of a natural tree within the same 2 blocks, the chain saws
+    into it (cracks and sawdust everyone sees). After 15 ticks (0.75 s) of continuous aim at that log it is broken
+    exactly as a left-click breaks it, so the tree fells just like left-click felling: same caps per tier, drops,
+    replanting and durability, claims apply, and crouching leaves it to Tree Harvester. Looking away or letting go
+    starts the cut over. Mobs in the cone keep getting sawn meanwhile; a mob in front of the log takes the chain
+    instead. Logs of builds (player-placed leaves, or no leaves) are never cut by the rev.
+  - Right-click on a log of a natural tree revs into it instead of stripping it (otherwise the first click would strip
+    the trunk); logs in builds still strip. Otherwise right-click does what the block does first (a chest opens);
+    anything without a right-click use of its own (stone, grass, air) revs. Apart from tree felling, revving never
+    breaks blocks. With a **shield in the off hand** right-click keeps blocking. Left-click felling and the crouch /
+    Tree Harvester split are unchanged. You walk slowly while revving, like drawing a bow.
   - Sound: the rev-up and rev-down are sent to everyone nearby (and played at once on your own client); every client
     plays a seamless engine loop for each player it sees revved up (the "using an item" flag is synced vanilla entity
     data), fading in as the rev-up tops out, and the first-person chainsaw rises during the wind-up and shakes once
@@ -66,9 +73,10 @@ Our own clean-room code, art and sound, MIT licensed.
 ```sh
 export JAVA_HOME=~/opt/jdk-17.0.20.1+1     # any JDK 17
 ./gradlew build                            # -> build/libs/localchainsaws-1.20.1-<version>.jar
-./gradlew runGameTestServer                # 20 server-side tests: grow trees, cut them with a fake player, count drops;
+./gradlew runGameTestServer                # 26 server-side tests: grow trees, cut them with a fake player, count drops;
                                            # swing / rev damage, wind-up, cone sweep and its 2-block / 45° /
-                                           # 3-target limits, durability floor, rev vs. felling, log stripping and blocks
+                                           # 3-target limits, durability floor, rev vs. felling, log stripping and blocks,
+                                           # revving into trees (cut time, caps, worn saw, builds, sneaking)
 ```
 
 ![The three chainsaws](docs/preview.png)
