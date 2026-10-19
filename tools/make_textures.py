@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Draws the three 16x16 chainsaw item sprites (our own pixel art, vanilla tool style: handle bottom-left, tip top-right)
-and an upscaled preview. Usage: make_textures.py [preview.png]"""
+"""Draws the three 16x16 chainsaw item sprites (our own pixel art, vanilla tool style: handle bottom-left, tip top-right),
+the 8x8 spark and blood particle sprites (greyscale: the particles tint them), and an upscaled preview.
+Usage: make_textures.py [preview.png]"""
 import sys
 from pathlib import Path
 from PIL import Image
 
 OUT = Path(__file__).resolve().parent.parent / "src/main/resources/assets/localchainsaws/textures/item"
+PARTICLE_OUT = OUT.parent / "particle"
 
 # Shared palette: orange body, grey engine/handles, dark steel chain.
 BODY = {"O": (232, 122, 28), "o": (170, 78, 14), "Y": (255, 176, 72), "D": (110, 48, 10)}
@@ -50,8 +52,37 @@ def draw(tier):
     return img
 
 
+# Particles, 8x8: W white, w light grey, g grey (multiplied by the particle colour in game).
+SHADES = {"W": 255, "w": 205, "g": 150}
+PARTICLES = {
+    # A spark that burns down: star, dot, ember.
+    "spark_0": ["........", "...w....", "...W....", ".wWWWw..", "...W....", "...w....", "........", "........"],
+    "spark_1": ["........", "........", "...ww...", "...WW...", "...ww...", "........", "........", "........"],
+    "spark_2": ["........", "........", "........", "...W....", "........", "........", "........", "........"],
+    # Droplets.
+    "blood_0": ["........", "........", "...gg...", "..gwWg..", "..gwwg..", "...gg...", "........", "........"],
+    "blood_1": ["........", "...g....", "..gwg...", "..wWwg..", "..gwwg..", "...gg...", "........", "........"],
+    "blood_2": ["........", "........", "..g.....", "...gwg..", "..gwWg..", "...gg...", "....g...", "........"],
+    "blood_3": ["........", "........", "........", "...gg...", "...wg...", "........", "........", "........"],
+}
+
+
+def draw_particle(rows):
+    img = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+    for y, row in enumerate(rows):
+        assert len(row) == 8, (y, row)
+        for x, c in enumerate(row):
+            if c != ".":
+                v = SHADES[c]
+                img.putpixel((x, y), (v, v, v, 255))
+    return img
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    PARTICLE_OUT.mkdir(parents=True, exist_ok=True)
+    for name, rows in PARTICLES.items():
+        draw_particle(rows).save(PARTICLE_OUT / f"{name}.png", optimize=True)
     imgs = []
     for tier in TIERS:
         img = draw(tier)

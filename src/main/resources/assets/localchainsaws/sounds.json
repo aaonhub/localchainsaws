@@ -2,5 +2,13 @@
   "item.chainsaw.cut": {
     "subtitle": "subtitles.localchainsaws.item.chainsaw.cut",
     "sounds": ["localchainsaws:item/chainsaw_cut"]
+  },
+  "item.chainsaw.hit": {
+    "subtitle": "subtitles.localchainsaws.item.chainsaw.hit",
+    "sounds": ["localchainsaws:item/chainsaw_hit"]
+  },
+  "item.chainsaw.rev": {
+    "subtitle": "subtitles.localchainsaws.item.chainsaw.rev",
+    "sounds": ["localchainsaws:item/chainsaw_rev"]
   }
 }

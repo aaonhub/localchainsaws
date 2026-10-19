@@ -3,5 +3,11 @@
   "item.localchainsaws.diamond_chainsaw": "Diamond Chainsaw",
   "item.localchainsaws.netherite_chainsaw": "Netherite Chainsaw",
   "item.localchainsaws.chainsaw.tooltip": "Fells a whole tree (up to %s logs)",
-  "subtitles.localchainsaws.item.chainsaw.cut": "Chainsaw roars"
+  "item.localchainsaws.chainsaw.tooltip.rev": "Hold right-click on a mob to rev into it",
+  "subtitles.localchainsaws.item.chainsaw.cut": "Chainsaw roars",
+  "subtitles.localchainsaws.item.chainsaw.hit": "Chainsaw bites",
+  "subtitles.localchainsaws.item.chainsaw.rev": "Chainsaw revs",
+  "death.attack.localchainsaws.chainsaw": "%1$s was shredded by %2$s",
+  "death.attack.localchainsaws.chainsaw.item": "%1$s was shredded by %2$s using %3$s",
+  "death.attack.localchainsaws.chainsaw.player": "%1$s was shredded by %2$s"
 }

@@ -1,16 +1,28 @@
 package net.bdoyl.localchainsaws;
 
 import java.util.List;
+import java.util.function.Consumer;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Tier;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.level.Level;
+import net.minecraftforge.client.extensions.common.IClientItemExtensions;
 import org.jetbrains.annotations.Nullable;
 
-/** A real axe (mines wood at axe speed, strips logs, takes axe enchantments) that also fells whole trees: see {@link TreeFeller}. */
+/**
+ * A real axe (mines wood at axe speed, strips logs, takes axe enchantments) that also fells whole trees (see
+ * {@link TreeFeller}) and fights like a chainsaw (see {@link ChainsawCombat}): swings rev and throw sparks, holding
+ * right-click on a mob or player revs the chain into it.
+ */
 public class ChainsawItem extends AxeItem {
     private final int maxLogs;
 
@@ -24,7 +36,37 @@ public class ChainsawItem extends AxeItem {
     }
 
     @Override
+    public boolean hurtEnemy(ItemStack stack, LivingEntity target, LivingEntity attacker) {
+        boolean hurt = super.hurtEnemy(stack, target, attacker);
+        if (attacker instanceof Player player && player.level() instanceof ServerLevel level) ChainsawCombat.impact(level, player, target, false);
+        return hurt;
+    }
+
+    @Override
+    public InteractionResult interactLivingEntity(ItemStack stack, Player player, LivingEntity target, InteractionHand hand) {
+        if (!ChainsawCombat.canStartRev(player, stack, hand)) return InteractionResult.PASS;
+        player.startUsingItem(hand);
+        return InteractionResult.sidedSuccess(player.level().isClientSide);
+    }
+
+    @Override
+    public int getUseDuration(ItemStack stack) {
+        return 72000; // as long as right-click is held
+    }
+
+    @Override
+    public void onUseTick(Level level, LivingEntity user, ItemStack stack, int remainingUseTicks) {
+        if (user instanceof ServerPlayer player) ChainsawCombat.revTick(player, stack, getUseDuration(stack) - remainingUseTicks);
+    }
+
+    @Override
+    public void initializeClient(Consumer<IClientItemExtensions> consumer) {
+        consumer.accept(ChainsawClient.ITEM_EXTENSIONS);
+    }
+
+    @Override
     public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.translatable("item.localchainsaws.chainsaw.tooltip", maxLogs).withStyle(ChatFormatting.GRAY));
+        tooltip.add(Component.translatable("item.localchainsaws.chainsaw.tooltip.rev").withStyle(ChatFormatting.GRAY));
     }
 }

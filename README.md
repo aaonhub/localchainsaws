@@ -23,6 +23,25 @@ Our own clean-room code, art and sound, MIT licensed.
   were ever turned on, whichever runs first takes the tree and the other finds nothing left to fell.)
 - Nether stems (no leaves) are not felled by the chainsaw itself; sneak for Tree Harvester's nether-tree support.
 
+## Fighting
+
+- **Swing** (left-click): a normal axe hit (same damage, cooldown, shield-disabling and 2 durability as the vanilla axe
+  of the tier) plus a rev burst sound and sparks and blood where the chain meets the mob. Skeletons, golems, slimes,
+  blazes and the like get extra sparks instead of blood (`data/localchainsaws/tags/entity_types/bloodless.json`).
+- **Hold right-click on a mob or player** to rev into it: a bite every 5 ticks (4 a second) that together deal 1.1x
+  the damage per second of perfectly timed axe swings (axe damage incl. Sharpness/Smite/Strength x attack speed), so
+  iron ~8.9, diamond ~9.9, netherite ~11 per second against no armour. Each bite costs 1 durability; the rev stops by
+  itself with 1 durability left (the chainsaw never breaks from revving) and won't start again until it's repaired.
+  - Bites don't knock the target back (it stays in the chain), use up the swing cooldown (rev-then-swing is no faster),
+    respect the usual attack checks (PvP setting, claim/protection mods via `AttackEntityEvent`, shields block them),
+    and kills read "X was shredded by Y" (damage type `localchainsaws:chainsaw`).
+  - The rev only starts when right-clicking a mob within reach with the chainsaw in the main hand and **no shield in the
+    off hand** (with a shield, right-click keeps blocking). Right-click on a log still strips it; left-click felling and
+    the crouch / Tree Harvester split are unchanged. You walk slowly while revving, like drawing a bow.
+  - Sound: every client plays a seamless engine loop for each player it sees revving (the "using an item" flag is
+    synced vanilla entity data) and the first-person chainsaw shakes; the bites' sparks/blood and the swing sound are
+    sent by the server to everyone nearby. Particles follow the client's particle setting.
+
 ## Recipes
 
 - Iron Chainsaw: `" I "`, `" RS"`, `" S "` (I iron ingot, R redstone, S string)
@@ -35,14 +54,19 @@ Our own clean-room code, art and sound, MIT licensed.
 ```sh
 export JAVA_HOME=~/opt/jdk-17.0.20.1+1     # any JDK 17
 ./gradlew build                            # -> build/libs/localchainsaws-1.20.1-<version>.jar
-./gradlew runGameTestServer                # 12 server-side tests: grow trees, cut them with a fake player, count drops
+./gradlew runGameTestServer                # 17 server-side tests: grow trees, cut them with a fake player, count drops;
+                                           # swing / rev damage, durability floor, rev vs. felling and log stripping
 ```
 
 ![The three chainsaws](docs/preview.png)
 
-Art and sound are generated, not drawn by hand in an editor: `tools/make_textures.py [preview.png]` (16x16 sprites),
-`tools/make_sound.py` (synthesized two-stroke engine + chain grind, Ogg Vorbis via ffmpeg), `tools/make_arena.py`
-(the empty gametest structure).
+Art and sound are generated, not drawn by hand in an editor: `tools/make_textures.py [preview.png]` (16x16 sprites,
+8x8 spark/blood particles), `tools/make_sound.py` (synthesized two-stroke engine + chain noise, Ogg Vorbis via ffmpeg:
+the felling roar, the hit burst and the seamless 2 s rev loop), `tools/make_arena.py` (the empty gametest structure).
+
+`-Dlocalchainsaws.clientcheck=true` on a client logs `[localchainsaws-clientcheck]` lines for every chainsaw sound it
+plays, each rev loop it starts (this player / another player) and the spark/blood particles it spawns per second; the
+headless two-client test uses it.
 
 The tests can also run inside a full modpack server: start it with
 `-Dlocalchainsaws.selftest=true` (Forge itself only registers gametests in a dev workspace, so this runs the same scenarios through `SelfTest`: trees in the sky around x=30000 z=30000, fake players, a `[localchainsaws-selftest] SUMMARY n/n passed` log line, then it stops the server; throwaway copies only)

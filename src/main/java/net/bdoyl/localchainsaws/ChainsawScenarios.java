@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.UUID;
 import java.util.function.Predicate;
+import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.data.worldgen.features.TreeFeatures;
@@ -14,16 +15,27 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.animal.IronGolem;
+import net.minecraft.world.entity.animal.Pig;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.common.util.FakePlayerFactory;
 import net.minecraftforge.fml.ModList;
@@ -56,9 +68,196 @@ final class ChainsawScenarios {
         ALL.put("stops_before_the_tool_breaks", new Scenario(ChainsawScenarios::stopsBeforeTheToolBreaks, 100));
         ALL.put("replanted_sapling_survives_a_held_swing", new Scenario(ChainsawScenarios::replantedSaplingSurvivesAHeldSwing, 140));
         ALL.put("neighbour_tree_keeps_its_leaves", new Scenario(ChainsawScenarios::neighbourTreeKeepsItsLeaves, 100));
+        // Fighting with it (ChainsawCombat).
+        ALL.put("swing_deals_axe_damage_with_effects", new Scenario(ChainsawScenarios::swingDealsAxeDamageWithEffects, 40));
+        ALL.put("rev_slightly_beats_axe_dps", new Scenario(ChainsawScenarios::revSlightlyBeatsAxeDps, 100));
+        ALL.put("rev_stops_at_one_durability", new Scenario(ChainsawScenarios::revStopsAtOneDurability, 100));
+        ALL.put("rev_needs_a_mob_in_reach", new Scenario(ChainsawScenarios::revNeedsAMobInReach, 60));
+        ALL.put("felling_still_works_after_revving", new Scenario(ChainsawScenarios::fellingStillWorksAfterRevving, 100));
     }
 
     private ChainsawScenarios() {}
+
+    /** A fake player whose swing is fully charged and whose stats include the held tool (fake players never tick). */
+    static final class Fighter extends FakePlayer {
+        Fighter(ServerLevel level, String name, ItemStack tool) {
+            super(level, new GameProfile(UUID.nameUUIDFromBytes(name.getBytes()), "[" + name + "]"));
+            setItemInHand(InteractionHand.MAIN_HAND, tool);
+            getAttributes().addTransientAttributeModifiers(tool.getAttributeModifiers(EquipmentSlot.MAINHAND));
+        }
+
+        void charge() {
+            attackStrengthTicker = 100;
+        }
+
+        private int used;
+
+        /** Right-click on {@code target} (the real interaction path); true when that started the rev. */
+        boolean rev(LivingEntity target) {
+            used = 0;
+            return interactOn(target, InteractionHand.MAIN_HAND).consumesAction() && isUsingItem();
+        }
+
+        /** Holding right-click for {@code ticks} ticks: the item's use tick, as LivingEntity.tick would call it. */
+        void holdUse(int ticks) {
+            for (int i = 0; i < ticks && isUsingItem(); i++) getUseItem().onUseTick(level(), this, getUseItem().getUseDuration() - used++);
+        }
+    }
+
+    private static Fighter fighter(TestArena h, String name, ItemStack tool) {
+        ChainsawCombat.recordEffects = true;
+        Fighter p = new Fighter(h.level(), name, tool);
+        BlockPos at = h.abs(BASE);
+        p.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5);
+        return p;
+    }
+
+    /** A still mob ({@code NoAI}) 2 blocks in front of the fighter, who looks at its middle. */
+    private static <T extends Mob> T dummy(TestArena h, EntityType<T> type, Fighter p) {
+        T mob = type.create(h.level());
+        BlockPos at = h.abs(BASE.offset(0, 0, 2));
+        mob.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, 180, 0);
+        mob.setNoAi(true);
+        mob.setPersistenceRequired();
+        h.level().addFreshEntity(mob);
+        p.lookAt(EntityAnchorArgument.Anchor.EYES, mob.position().add(0, mob.getBbHeight() * 0.6, 0));
+        return mob;
+    }
+
+    private static int[] effects(LivingEntity target) {
+        return ChainsawCombat.EFFECTS.getOrDefault(target.getId(), new int[3]);
+    }
+
+    /** A full swing does exactly the axe's damage, costs the axe's 2 durability, and sends the rev sound + sparks + blood. */
+    static void swingDealsAxeDamageWithEffects(TestArena h) {
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-swing", tool);
+        Pig pig = dummy(h, EntityType.PIG, p);
+        float axe = (float) p.getAttributeValue(Attributes.ATTACK_DAMAGE);
+        p.charge();
+        p.attack(pig);
+        float dealt = pig.getMaxHealth() - pig.getHealth();
+        int[] fx = effects(pig);
+        LOG.info("[localchainsaws-test] swing: axe damage {}, pig took {}, durability used {}, effects melee={} rev={} blood={}",
+                axe, dealt, tool.getDamageValue(), fx[0], fx[1], fx[2]);
+        h.check(axe == 9.0F, "an iron chainsaw should hit like an iron axe (9), has " + axe);
+        h.check(Math.abs(dealt - axe) < 0.01F, "the pig should take " + axe + ", took " + dealt);
+        h.check(tool.getDamageValue() == 2, "a swing should cost 2 durability like an axe, cost " + tool.getDamageValue());
+        h.check(fx[0] == 1 && fx[1] == 0 && fx[2] == 1, "expected one melee impact with blood");
+        h.pass();
+    }
+
+    /**
+     * Holding right-click on an iron golem (100 health, no knockback, no blood) for 2 s: 8 hits that together beat
+     * perfectly timed axe swings by about 10% (not a one-shot), 1 durability each.
+     */
+    static void revSlightlyBeatsAxeDps(TestArena h) {
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-rev", tool);
+        IronGolem golem = dummy(h, EntityType.IRON_GOLEM, p);
+        h.check(p.rev(golem), "right-click on the golem should start the rev");
+        p.holdUse(1);
+        float first = golem.getMaxHealth() - golem.getHealth();
+        p.holdUse(40);
+        float dealt = golem.getMaxHealth() - golem.getHealth();
+        double axeDps = p.getAttributeValue(Attributes.ATTACK_DAMAGE) * p.getAttributeValue(Attributes.ATTACK_SPEED);
+        double revDps = dealt / 2.0;
+        int[] fx = effects(golem);
+        LOG.info("[localchainsaws-test] rev: 2 s on an iron golem -> {} damage ({} per s, axe {} per s, x{}), durability used {}, effects rev={} blood={}",
+                dealt, revDps, axeDps, String.format("%.2f", revDps / axeDps), tool.getDamageValue(), fx[1], fx[2]);
+        h.check(first == 0.0F, "the first rev hit should come after the chain spins up, not at once");
+        h.check(revDps >= axeDps * 1.0 && revDps <= axeDps * 1.25, "rev DPS " + revDps + " should be 1.0-1.25x axe DPS " + axeDps);
+        h.check(dealt / 8 < p.getAttributeValue(Attributes.ATTACK_DAMAGE) * 0.35, "one rev hit should be a small bite, was " + dealt / 8);
+        h.check(golem.isAlive() && golem.getHealth() > 50, "the golem should still be standing");
+        h.check(tool.getDamageValue() == 8, "8 rev hits should cost 8 durability, cost " + tool.getDamageValue());
+        h.check(fx[1] == 8 && fx[2] == 0, "expected 8 rev impacts without blood on a golem, got rev=" + fx[1] + " blood=" + fx[2]);
+        p.releaseUsingItem();
+        h.check(!p.isUsingItem(), "letting go of right-click should stop the rev");
+        h.pass();
+    }
+
+    /** A worn chainsaw revs until it has 1 durability left, then stops by itself and won't start again. */
+    static void revStopsAtOneDurability(TestArena h) {
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get());
+        tool.setDamageValue(tool.getMaxDamage() - 4);
+        Fighter p = fighter(h, "lcs-rev-worn", tool);
+        Pig pig = dummy(h, EntityType.PIG, p);
+        pig.getAttribute(Attributes.MAX_HEALTH).setBaseValue(200);
+        pig.setHealth(200);
+        h.check(p.rev(pig), "right-click on the pig should start the rev");
+        p.holdUse(60);
+        int left = tool.getMaxDamage() - tool.getDamageValue();
+        int[] fx = effects(pig);
+        LOG.info("[localchainsaws-test] worn rev: {} durability left, {} rev hits, still revving {}", left, fx[1], p.isUsingItem());
+        h.check(!tool.isEmpty() && left == 1, "the chainsaw should end on 1 durability, has " + left);
+        h.check(fx[1] == 3 && fx[2] == 3, "expected 3 bloody rev hits before it stopped, got " + fx[1]);
+        h.check(!p.isUsingItem(), "the rev should stop by itself at 1 durability");
+        h.check(pig.getDeltaMovement().horizontalDistance() < 1.0E-6, "rev hits should not knock the pig back");
+        h.check(!p.rev(pig), "a chainsaw on 1 durability should not rev");
+        h.pass();
+    }
+
+    /**
+     * The rev only starts on a mob: right-click in the air does nothing, on a log it still strips it, and with a shield
+     * in the off hand right-click keeps blocking (the rev needs both hands).
+     */
+    static void revNeedsAMobInReach(TestArena h) {
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.NETHERITE_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-rev-air", tool);
+        h.check(!tool.use(h.level(), p, InteractionHand.MAIN_HAND).getResult().consumesAction() && !p.isUsingItem(), "right-click in the air should not rev");
+
+        BlockPos log = BASE.offset(1, 0, 0);
+        h.setBlock(log, Blocks.OAK_LOG);
+        BlockHitResult face = new BlockHitResult(Vec3.atCenterOf(h.abs(log)), net.minecraft.core.Direction.WEST, h.abs(log), false);
+        h.check(tool.useOn(new UseOnContext(p, InteractionHand.MAIN_HAND, face)).consumesAction(), "right-click on a log should strip it");
+        h.check(h.getBlockState(log).is(Blocks.STRIPPED_OAK_LOG) && !p.isUsingItem(), "the log should be stripped, and no rev");
+
+        Pig pig = dummy(h, EntityType.PIG, p);
+        p.setItemInHand(InteractionHand.OFF_HAND, new ItemStack(Items.SHIELD));
+        h.check(!p.rev(pig), "with a shield in the off hand the rev should not start");
+        p.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY);
+
+        // Revving at a mob that is out of reach (6 blocks) bites nothing.
+        int stripCost = tool.getDamageValue(); // stripping costs 1 durability, like any axe
+        h.check(p.rev(pig), "right-click on the pig should start the rev");
+        pig.moveTo(pig.getX(), pig.getY(), pig.getZ() + 4);
+        p.lookAt(EntityAnchorArgument.Anchor.EYES, pig.position().add(0, 0.5, 0));
+        p.holdUse(20);
+        h.check(pig.getHealth() == pig.getMaxHealth() && tool.getDamageValue() == stripCost, "a mob out of reach should not be hurt");
+        p.releaseUsingItem();
+        h.pass();
+    }
+
+    /** Revving a mob doesn't change felling: afterwards a left-click on the oak still brings the whole tree down. */
+    static void fellingStillWorksAfterRevving(TestArena h) {
+        floor(h);
+        grow(h, TreeFeatures.OAK, BASE.offset(3, 0, 0), 13);
+        int logs = countLogs(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-rev-fell", tool);
+        IronGolem golem = dummy(h, EntityType.IRON_GOLEM, p);
+        h.check(p.rev(golem), "right-click on the golem should start the rev");
+        p.holdUse(11);
+        p.releaseUsingItem();
+        int revCost = tool.getDamageValue();
+        golem.discard();
+        BlockPos at = h.abs(BASE.offset(3, 0, 0));
+        p.getDigSpeed(h.level().getBlockState(at), at);
+        h.check(p.gameMode.destroyBlock(at), "the player could not break the log");
+        h.later(5, () -> {
+            int got = dropped(h, Items.OAK_LOG);
+            LOG.info("[localchainsaws-test] fell after rev: {} logs grown -> {} dropped, {} left, durability rev {} + felling {}",
+                    logs, got, countLogs(h), revCost, tool.getDamageValue() - revCost);
+            h.check(revCost == 2, "2 rev hits should cost 2 durability, cost " + revCost);
+            h.check(got == logs && countLogs(h) == 0, "the whole oak should come down after revving, dropped " + got + "/" + logs);
+            h.check(tool.getDamageValue() - revCost == logs, "felling should cost 1 durability per log");
+            h.pass();
+        });
+    }
 
     private static void floor(TestArena h) {
         for (int x = 0; x < 21; x++) for (int z = 0; z < 21; z++) h.setBlock(new BlockPos(x, 0, z), Blocks.GRASS_BLOCK);
