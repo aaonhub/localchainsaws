@@ -30,8 +30,10 @@ Our own clean-room code, art and sound, MIT licensed.
   blazes and the like get extra sparks instead of blood (`data/localchainsaws/tags/entity_types/bloodless.json`).
 - **Hold right-click** (anywhere: in the air, at a mob, at the ground) to start the engine: a rev-up sound and a puff
   of smoke, and 12 ticks (0.6 s) of wind-up while the saw is brought up. Once it's revved up, as long as right-click is
-  held, the chain saws **everything in front of you** every 5 ticks (4 times a second): every living thing whose
-  hitbox is within attack reach (3 blocks in survival) inside a 60° cone around where you look, not behind a block.
+  held, the chain saws **what's right in front of you** every 5 ticks (4 times a second): up to 3 living things
+  (the one under the crosshair first, then the nearest) whose hitbox is within 2 blocks (shorter than a normal hit's 3)
+  inside a narrow 45° cone around where you look, not behind a block. These numbers (wind-up, interval, damage factor,
+  reach, cone, max targets) are the tuning constants at the top of `ChainsawCombat`.
   Letting go winds the engine down (rev-down sound, a little smoke); press again for a new wind-up.
   - Each thing sawn takes 1.1x the damage per second of perfectly timed axe swings (axe damage incl.
     Sharpness/Smite/Strength x attack speed), so iron ~8.9, diamond ~9.9, netherite ~11 per second against no armour,
@@ -64,9 +66,9 @@ Our own clean-room code, art and sound, MIT licensed.
 ```sh
 export JAVA_HOME=~/opt/jdk-17.0.20.1+1     # any JDK 17
 ./gradlew build                            # -> build/libs/localchainsaws-1.20.1-<version>.jar
-./gradlew runGameTestServer                # 19 server-side tests: grow trees, cut them with a fake player, count drops;
-                                           # swing / rev damage, wind-up, cone sweep, durability floor, rev vs. felling,
-                                           # log stripping and blocks
+./gradlew runGameTestServer                # 20 server-side tests: grow trees, cut them with a fake player, count drops;
+                                           # swing / rev damage, wind-up, cone sweep and its 2-block / 45° /
+                                           # 3-target limits, durability floor, rev vs. felling, log stripping and blocks
 ```
 
 ![The three chainsaws](docs/preview.png)

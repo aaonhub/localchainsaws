@@ -77,6 +77,7 @@ final class ChainsawScenarios {
         ALL.put("rev_winds_up_before_sawing", new Scenario(ChainsawScenarios::revWindsUpBeforeSawing, 80));
         ALL.put("rev_slightly_beats_axe_dps", new Scenario(ChainsawScenarios::revSlightlyBeatsAxeDps, 100));
         ALL.put("rev_saws_everything_in_front", new Scenario(ChainsawScenarios::revSawsEverythingInFront, 80));
+        ALL.put("rev_saws_at_most_three_at_once", new Scenario(ChainsawScenarios::revSawsAtMostThreeAtOnce, 60));
         ALL.put("rev_stops_at_one_durability", new Scenario(ChainsawScenarios::revStopsAtOneDurability, 100));
         ALL.put("rev_starts_anywhere_and_breaks_no_blocks", new Scenario(ChainsawScenarios::revStartsAnywhereAndBreaksNoBlocks, 80));
         ALL.put("felling_still_works_after_revving", new Scenario(ChainsawScenarios::fellingStillWorksAfterRevving, 100));
@@ -112,11 +113,11 @@ final class ChainsawScenarios {
             for (int i = 0; i < ticks && isUsingItem(); i++) updateUsingItem(getUseItem());
         }
 
-        /** Look straight ahead towards {@code yaw} (0 = south). */
-        void face(float yaw) {
+        /** Look towards {@code yaw} (0 = south), {@code pitch} degrees down. */
+        void face(float yaw, float pitch) {
             setYRot(yaw);
             setYHeadRot(yaw);
-            setXRot(0);
+            setXRot(pitch);
         }
     }
 
@@ -246,45 +247,73 @@ final class ChainsawScenarios {
         h.pass();
     }
 
+    /** Looking south at the middle of a pig 1.6 blocks ahead (the layout below), as a player aiming at it would. */
+    private static final float PITCH_AT_PIG = 36.2F;
+
     /**
-     * One sweep saws every mob in the cone within reach (three pigs ahead), and nothing behind, off to the side, out of
-     * reach, behind a wall, the player's own wolf or an armor stand. Each pig sawn costs 1 durability.
+     * One sweep saws what is in the narrow cone within the chain's short reach (two pigs just ahead), and nothing
+     * behind, off to the side, wider than the cone, within a normal hit's reach but beyond the chain's, behind a wall,
+     * the player's own wolf or an armor stand. Each pig sawn costs 1 durability.
      */
     static void revSawsEverythingInFront(TestArena h) {
         floor(h);
         ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
         Fighter p = fighter(h, "lcs-sweep", tool);
-        p.face(0); // south, +z
-        Pig ahead = mobAt(h, EntityType.PIG, p, 0, 2), left = mobAt(h, EntityType.PIG, p, 1.1, 2.3), right = mobAt(h, EntityType.PIG, p, -1.1, 2.3);
-        Pig behind = mobAt(h, EntityType.PIG, p, 0, -2), side = mobAt(h, EntityType.PIG, p, 2, 0.6), far = mobAt(h, EntityType.PIG, p, 0, 4.6);
-        Pig walled = mobAt(h, EntityType.PIG, p, -2.3, 0);
+        p.face(0, PITCH_AT_PIG); // south, +z
+        Pig ahead = mobAt(h, EntityType.PIG, p, 0, 1.6), right = mobAt(h, EntityType.PIG, p, -0.95, 1.5);
+        Pig behind = mobAt(h, EntityType.PIG, p, 0, -1.6), side = mobAt(h, EntityType.PIG, p, 1.9, 0);
+        Pig wide = mobAt(h, EntityType.PIG, p, 1.3, 1.2); // 27 degrees off: inside a 60 degree cone, not a 45
+        Pig far = mobAt(h, EntityType.PIG, p, 0, 3.0); // 2.65 blocks: a normal hit reaches it, the chain doesn't
+        Pig walled = mobAt(h, EntityType.PIG, p, -2.0, 0);
         for (int y = 0; y < 3; y++) h.setBlock(BASE.offset(-1, y + 1, 0), Blocks.STONE);
-        Wolf wolf = mobAt(h, EntityType.WOLF, p, 0.6, 1.0);
+        Wolf wolf = mobAt(h, EntityType.WOLF, p, 0.35, 0.75);
         wolf.setTame(true);
         wolf.setOwnerUUID(p.getUUID());
         ArmorStand stand = EntityType.ARMOR_STAND.create(h.level());
-        stand.moveTo(p.getX() - 0.6, p.getY(), p.getZ() + 1.0);
+        stand.moveTo(p.getX() - 0.35, p.getY(), p.getZ() + 0.75);
         h.level().addFreshEntity(stand);
 
         h.check(p.rev(), "right-click should start the rev");
         p.holdUse(ChainsawCombat.WINDUP + 1);
-        List<Pig> sawn = List.of(ahead, left, right);
+        List<Pig> sawn = List.of(ahead, right);
         boolean allSawn = sawn.stream().allMatch(ChainsawScenarios::hurt) && sawn.stream().allMatch(e -> effects(e)[1] == 1);
-        boolean spared = !hurt(behind) && !hurt(side) && !hurt(far) && !hurt(walled) && !hurt(wolf) && stand.isAlive();
+        boolean spared = !hurt(behind) && !hurt(side) && !hurt(wide) && !hurt(far) && !hurt(walled) && !hurt(wolf) && stand.isAlive();
         int cost = tool.getDamageValue();
-        LOG.info("[localchainsaws-test] sweep: ahead/left/right sawn {}, behind/side/far/walled/own wolf/armor stand spared {}, durability {}",
-                allSawn, spared, cost);
-        h.check(allSawn, "all three pigs in front should be sawn once");
+        LOG.info("[localchainsaws-test] sweep: ahead/right sawn {}, behind/side/wide/far/walled/own wolf/armor stand spared {} (wide {} far {}), durability {}",
+                allSawn, spared, hurt(wide) ? "HURT" : "spared", hurt(far) ? "HURT" : "spared", cost);
+        h.check(allSawn, "both pigs just ahead should be sawn once");
+        h.check(!hurt(wide), "a pig 27 degrees off should be outside the 45 degree cone");
+        h.check(!hurt(far), "a pig 2.65 blocks away should be beyond the chain's 2-block reach");
         h.check(spared, "nothing behind, beside, out of reach, behind a wall, the own wolf or the armor stand should be hurt");
-        h.check(cost == 3, "3 pigs sawn should cost 3 durability, cost " + cost);
+        h.check(cost == 2, "2 pigs sawn should cost 2 durability, cost " + cost);
 
         // Turn to the walled pig: the wall stops the chain; take the wall away and it bites.
-        p.face(90); // west, -x
+        p.face(90, 30.3F); // west, -x, at the walled pig's middle
         p.holdUse(ChainsawCombat.REV_INTERVAL);
-        h.check(!hurt(walled) && tool.getDamageValue() == 3, "the chain should not saw through a wall");
+        h.check(!hurt(walled) && tool.getDamageValue() == 2, "the chain should not saw through a wall");
         for (int y = 0; y < 3; y++) h.setBlock(BASE.offset(-1, y + 1, 0), Blocks.AIR);
         p.holdUse(ChainsawCombat.REV_INTERVAL);
-        h.check(hurt(walled) && tool.getDamageValue() == 4, "without the wall the pig should be sawn");
+        h.check(hurt(walled) && tool.getDamageValue() == 3, "without the wall the pig should be sawn");
+        p.releaseUsingItem();
+        h.pass();
+    }
+
+    /** Five pigs crowded right in front: one sweep saws only {@link ChainsawCombat#MAX_TARGETS} of them (3 durability). */
+    static void revSawsAtMostThreeAtOnce(TestArena h) {
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-crowd", tool);
+        p.face(0, PITCH_AT_PIG);
+        List<Pig> crowd = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) crowd.add(mobAt(h, EntityType.PIG, p, -0.2 + 0.1 * i, 1.6));
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + 1);
+        long sawn = crowd.stream().filter(ChainsawScenarios::hurt).count();
+        LOG.info("[localchainsaws-test] crowd: {} of 5 pigs in reach sawn in one sweep, durability {}", sawn, tool.getDamageValue());
+        h.check(sawn == ChainsawCombat.MAX_TARGETS, "one sweep should saw " + ChainsawCombat.MAX_TARGETS + " of the 5 pigs, sawed " + sawn);
+        h.check(tool.getDamageValue() == ChainsawCombat.MAX_TARGETS, "and cost " + ChainsawCombat.MAX_TARGETS + " durability, cost " + tool.getDamageValue());
+        p.holdUse(ChainsawCombat.REV_INTERVAL);
+        h.check(tool.getDamageValue() == 2 * ChainsawCombat.MAX_TARGETS, "the next sweep saws " + ChainsawCombat.MAX_TARGETS + " again");
         p.releaseUsingItem();
         h.pass();
     }
@@ -295,8 +324,8 @@ final class ChainsawScenarios {
         ItemStack tool = new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get());
         tool.setDamageValue(tool.getMaxDamage() - 3);
         Fighter p = fighter(h, "lcs-rev-worn", tool);
-        p.face(0);
-        List<Pig> pigs = List.of(mobAt(h, EntityType.PIG, p, 0, 2), mobAt(h, EntityType.PIG, p, 1.1, 2.3), mobAt(h, EntityType.PIG, p, -1.1, 2.3));
+        p.face(0, PITCH_AT_PIG);
+        List<Pig> pigs = List.of(mobAt(h, EntityType.PIG, p, 0, 1.6), mobAt(h, EntityType.PIG, p, 0.95, 1.5), mobAt(h, EntityType.PIG, p, -0.95, 1.5));
         for (Pig pig : pigs) {
             pig.getAttribute(Attributes.MAX_HEALTH).setBaseValue(200);
             pig.setHealth(200);
@@ -324,7 +353,7 @@ final class ChainsawScenarios {
         floor(h);
         ItemStack tool = new ItemStack(LocalChainsaws.NETHERITE_CHAINSAW.get());
         Fighter p = fighter(h, "lcs-rev-air", tool);
-        p.face(0);
+        p.face(0, 0);
         Pig far = mobAt(h, EntityType.PIG, p, 0, 5);
         h.check(p.rev(), "right-click in the air should start the engine");
         p.holdUse(ChainsawCombat.WINDUP + 20);

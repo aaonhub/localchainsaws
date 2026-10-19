@@ -43,21 +43,28 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 /**
  * The chainsaw as a weapon. A normal swing is a vanilla axe hit plus a rev sound and sparks/blood at the impact. Holding
  * right-click anywhere starts the engine: a rev-up and a puff of smoke, {@link #WINDUP} ticks of wind-up, then every
- * {@link #REV_INTERVAL} ticks the chain saws every living thing in a {@link #CONE_DEGREES} cone in front of the player
- * within attack reach. Each one takes slightly more than axe DPS ({@link #REV_DPS_FACTOR}) and costs 1 durability,
- * never below 1 durability. Letting go winds it down. All server side; the sound and particles are broadcast to
+ * {@link #REV_INTERVAL} ticks the chain saws up to {@link #MAX_TARGETS} living things in a narrow {@link #CONE_DEGREES}
+ * cone in front of the player within a short {@link #REACH} (shorter than a normal hit). Each one takes slightly more
+ * than axe DPS ({@link #REV_DPS_FACTOR}) and costs 1 durability, never below 1 durability. Letting go winds it down. All server side; the sound and particles are broadcast to
  * everyone nearby, and the rev loop is played by each client for every player it sees revved up (the "using an item"
  * flag is synced vanilla entity data), see ChainsawClient.
  */
 public final class ChainsawCombat {
+    // ---- Rev attack tuning: everything about how strong holding right-click is lives here. ----
+    // Kept short and narrow on purpose (Guy 2026-10-19: "to make it not too op let's limit the range").
+
     /** Ticks of wind-up after right-click is pressed before the chain saws anything. */
     static final int WINDUP = 12;
     /** Ticks between two sweeps once revved up (4 a second). */
     static final int REV_INTERVAL = 5;
     /** Rev damage per second compared to perfectly timed axe swings (damage x attack speed), for each thing sawn. */
     static final float REV_DPS_FACTOR = 1.1F;
-    /** Width of the area sawn: everything within this many degrees of where the player looks, within attack reach. */
-    static final double CONE_DEGREES = 60.0;
+    /** How far the chain reaches, in blocks from the eyes to the nearest point of a hitbox (a normal hit reaches 3). */
+    static final double REACH = 2.0;
+    /** Width of the area sawn: hitboxes within this many degrees (in total, so half to each side) of where the player looks. */
+    static final double CONE_DEGREES = 45.0;
+    /** Most things sawn per sweep: the one under the crosshair first, then the nearest. */
+    static final int MAX_TARGETS = 3;
     private static final double CONE_COS = Math.cos(Math.toRadians(CONE_DEGREES / 2));
 
     static final ResourceKey<DamageType> CHAINSAW_DAMAGE =
@@ -170,23 +177,24 @@ public final class ChainsawCombat {
     }
 
     /**
-     * Everything the chain reaches, nearest first: the mob under the crosshair, plus every living thing whose box comes
-     * within attack reach inside the cone in front of the player, not behind a block. Never the player, what they ride
-     * or who rides with them, teammates, their own pets, or armor stands; someone else's pet only when aimed at.
+     * What one sweep saws, at most {@link #MAX_TARGETS}: the mob under the crosshair first, then the nearest living
+     * things whose box comes within {@link #REACH} inside the cone in front of the player, not behind a block. Never the
+     * player, what they ride or who rides with them, teammates, their own pets, or armor stands; someone else's pet only
+     * when aimed at.
      */
     static List<LivingEntity> targetsInReach(Player player) {
-        double reach = player.getEntityReach();
+        double reach = REACH;
         Vec3 eye = player.getEyePosition();
         Vec3 look = player.getViewVector(1.0F);
-        LivingEntity aimed = targetInReach(player);
+        LivingEntity aimed = targetInReach(player, reach);
         List<LivingEntity> found = new ArrayList<>();
         for (LivingEntity e : player.level().getEntitiesOfClass(LivingEntity.class, player.getBoundingBox().inflate(reach + 1.0),
                 e -> e != player && e.isAlive() && !e.isSpectator() && e.isPickable())) {
             if (!maySaw(player, e, e == aimed)) continue;
             if (e == aimed || inCone(player, eye, look, reach, e.getBoundingBox())) found.add(e);
         }
-        found.sort(Comparator.comparingDouble(e -> e.getBoundingBox().distanceToSqr(eye)));
-        return found;
+        found.sort(Comparator.<LivingEntity, Boolean>comparing(e -> e != aimed).thenComparingDouble(e -> e.getBoundingBox().distanceToSqr(eye)));
+        return found.size() > MAX_TARGETS ? found.subList(0, MAX_TARGETS) : found;
     }
 
     private static boolean maySaw(Player player, LivingEntity e, boolean aimed) {
@@ -195,16 +203,23 @@ public final class ChainsawCombat {
         return true;
     }
 
-    /** The part of the box nearest the line of sight is within reach, inside the cone, and not behind a block. */
+    /**
+     * The nearest point of the box is within reach (like a normal hit), the line of sight goes through the box or the
+     * part of it nearest the line of sight is inside the cone, and it isn't behind a block.
+     */
     private static boolean inCone(Player player, Vec3 eye, Vec3 look, double reach, AABB box) {
         if (box.contains(eye)) return true;
+        Vec3 closest = new Vec3(Mth.clamp(eye.x, box.minX, box.maxX), Mth.clamp(eye.y, box.minY, box.maxY), Mth.clamp(eye.z, box.minZ, box.maxZ));
+        if (closest.distanceToSqr(eye) > reach * reach) return false;
         Vec3 center = box.getCenter();
-        Vec3 onSight = eye.add(look.scale(Mth.clamp(center.subtract(eye).dot(look), 0.0, reach)));
-        Vec3 near = new Vec3(Mth.clamp(onSight.x, box.minX, box.maxX), Mth.clamp(onSight.y, box.minY, box.maxY),
-                Mth.clamp(onSight.z, box.minZ, box.maxZ));
-        Vec3 to = near.subtract(eye);
-        double dist = to.length();
-        if (dist > reach || to.dot(look) < dist * CONE_COS) return false;
+        Vec3 near = box.clip(eye, eye.add(look.scale(reach))).orElse(null);
+        if (near == null) {
+            Vec3 onSight = eye.add(look.scale(Mth.clamp(center.subtract(eye).dot(look), 0.0, reach)));
+            near = new Vec3(Mth.clamp(onSight.x, box.minX, box.maxX), Mth.clamp(onSight.y, box.minY, box.maxY),
+                    Mth.clamp(onSight.z, box.minZ, box.maxZ));
+            Vec3 to = near.subtract(eye);
+            if (to.dot(look) < to.length() * CONE_COS) return false;
+        }
         return clear(player, eye, near) || clear(player, eye, center);
     }
 
@@ -222,9 +237,8 @@ public final class ChainsawCombat {
         level.sendParticles(ParticleTypes.SMOKE, at.x, at.y, at.z, count, 0.06, 0.04, 0.06, speed);
     }
 
-    /** The living entity under the crosshair within attack reach, not behind a block. */
-    static LivingEntity targetInReach(Player player) {
-        double reach = player.getEntityReach();
+    /** The living entity under the crosshair within {@code reach}, not behind a block. */
+    static LivingEntity targetInReach(Player player, double reach) {
         Vec3 eye = player.getEyePosition();
         Vec3 look = player.getViewVector(1.0F);
         Vec3 end = eye.add(look.scale(reach));
