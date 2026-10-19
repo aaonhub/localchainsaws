@@ -50,7 +50,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
  * The chainsaw as a weapon. A normal swing is a vanilla axe hit plus a rev sound and sparks/blood at the impact. Holding
  * right-click anywhere starts the engine: a rev-up and a puff of smoke, {@link #WINDUP} ticks of wind-up, then every
  * {@link #REV_INTERVAL} ticks the chain saws up to {@link #MAX_TARGETS} living things in a narrow {@link #CONE_DEGREES}
- * cone in front of the player within a short {@link #REACH} (shorter than a normal hit). Each one takes slightly more
+ * cone in front of the player within {@link #REACH}. Each one takes slightly more
  * than axe DPS ({@link #REV_DPS_FACTOR}) and costs 1 durability, never below 1 durability. Meanwhile a log of a natural
  * tree under the crosshair within the same reach is sawn into: after {@link #CUT_TICKS} ticks on it, it is broken
  * exactly as a left-click would break it, so the tree fells as usual (see TreeFeller). Letting go winds it down. All server side; the sound and particles are broadcast to
@@ -59,7 +59,8 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
  */
 public final class ChainsawCombat {
     // ---- Rev attack tuning: everything about how strong holding right-click is lives here. ----
-    // Kept short and narrow on purpose (Guy 2026-10-19: "to make it not too op let's limit the range").
+    // Kept narrow and capped on purpose (Guy 2026-10-19: "to make it not too op let's limit the range"); reach back to a
+    // normal hit's 3 blocks at his request the same evening.
 
     /** Ticks of wind-up after right-click is pressed before the chain saws anything. */
     static final int WINDUP = 12;
@@ -67,8 +68,8 @@ public final class ChainsawCombat {
     static final int REV_INTERVAL = 5;
     /** Rev damage per second compared to perfectly timed axe swings (damage x attack speed), for each thing sawn. */
     static final float REV_DPS_FACTOR = 1.1F;
-    /** How far the chain reaches, in blocks from the eyes to the nearest point of a hitbox (a normal hit reaches 3). */
-    static final double REACH = 2.0;
+    /** How far the chain reaches (mobs and tree trunks), in blocks from the eyes to the nearest point of a hitbox, like a normal hit. */
+    static final double REACH = 3.0;
     /** Width of the area sawn: hitboxes within this many degrees (in total, so half to each side) of where the player looks. */
     static final double CONE_DEGREES = 45.0;
     /** Most things sawn per sweep: the one under the crosshair first, then the nearest. */

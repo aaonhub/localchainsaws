@@ -31,7 +31,7 @@ Our own clean-room code, art and sound, MIT licensed.
 - **Hold right-click** (anywhere: in the air, at a mob, at the ground) to start the engine: a rev-up sound and a puff
   of smoke, and 12 ticks (0.6 s) of wind-up while the saw is brought up. Once it's revved up, as long as right-click is
   held, the chain saws **what's right in front of you** every 5 ticks (4 times a second): up to 3 living things
-  (the one under the crosshair first, then the nearest) whose hitbox is within 2 blocks (shorter than a normal hit's 3)
+  (the one under the crosshair first, then the nearest) whose hitbox is within 3 blocks (a normal hit's reach)
   inside a narrow 45° cone around where you look, not behind a block. These numbers (wind-up, interval, damage factor,
   reach, cone, max targets, cut time) are the tuning constants at the top of `ChainsawCombat`.
   Letting go winds the engine down (rev-down sound, a little smoke); press again for a new wind-up.
@@ -44,7 +44,7 @@ Our own clean-room code, art and sound, MIT licensed.
   - Bites don't knock the target back (it stays in the chain), use up the swing cooldown (rev-then-swing is no faster),
     respect the usual attack checks (PvP setting, claim/protection mods via `AttackEntityEvent`, shields block them),
     and kills read "X was shredded by Y" (damage type `localchainsaws:chainsaw`).
-  - **Revved into a tree:** with the crosshair on a log of a natural tree within the same 2 blocks, the chain saws
+  - **Revved into a tree:** with the crosshair on a log of a natural tree within the same 3 blocks, the chain saws
     into it (cracks and sawdust everyone sees). After 15 ticks (0.75 s) of continuous aim at that log it is broken
     exactly as a left-click breaks it, so the tree fells just like left-click felling: same caps per tier, drops,
     replanting and durability, claims apply, and crouching leaves it to Tree Harvester. Looking away or letting go
@@ -74,7 +74,7 @@ Our own clean-room code, art and sound, MIT licensed.
 export JAVA_HOME=~/opt/jdk-17.0.20.1+1     # any JDK 17
 ./gradlew build                            # -> build/libs/localchainsaws-1.20.1-<version>.jar
 ./gradlew runGameTestServer                # 26 server-side tests: grow trees, cut them with a fake player, count drops;
-                                           # swing / rev damage, wind-up, cone sweep and its 2-block / 45° /
+                                           # swing / rev damage, wind-up, cone sweep and its 3-block / 45° /
                                            # 3-target limits, durability floor, rev vs. felling, log stripping and blocks,
                                            # revving into trees (cut time, caps, worn saw, builds, sneaking)
 ```

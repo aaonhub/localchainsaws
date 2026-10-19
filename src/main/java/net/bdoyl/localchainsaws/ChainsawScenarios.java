@@ -258,9 +258,9 @@ final class ChainsawScenarios {
     private static final float PITCH_AT_PIG = 36.2F;
 
     /**
-     * One sweep saws what is in the narrow cone within the chain's short reach (two pigs just ahead), and nothing
-     * behind, off to the side, wider than the cone, within a normal hit's reach but beyond the chain's, behind a wall,
-     * the player's own wolf or an armor stand. Each pig sawn costs 1 durability.
+     * One sweep saws what is in the narrow cone within the chain's 3-block reach (two pigs just ahead and one 2.65 blocks
+     * off), and nothing behind, off to the side, wider than the cone, beyond 3 blocks, behind a wall, the player's own
+     * wolf or an armor stand. Each pig sawn costs 1 durability.
      */
     static void revSawsEverythingInFront(TestArena h) {
         floor(h);
@@ -270,7 +270,8 @@ final class ChainsawScenarios {
         Pig ahead = mobAt(h, EntityType.PIG, p, 0, 1.6), right = mobAt(h, EntityType.PIG, p, -0.95, 1.5);
         Pig behind = mobAt(h, EntityType.PIG, p, 0, -1.6), side = mobAt(h, EntityType.PIG, p, 1.9, 0);
         Pig wide = mobAt(h, EntityType.PIG, p, 1.3, 1.2); // 27 degrees off: inside a 60 degree cone, not a 45
-        Pig far = mobAt(h, EntityType.PIG, p, 0, 3.0); // 2.65 blocks: a normal hit reaches it, the chain doesn't
+        Pig mid = mobAt(h, EntityType.PIG, p, 0, 3.0); // 2.65 blocks: within the 3-block reach
+        Pig far = mobAt(h, EntityType.PIG, p, 0, 4.0); // 3.62 blocks: beyond it
         Pig walled = mobAt(h, EntityType.PIG, p, -2.0, 0);
         for (int y = 0; y < 3; y++) h.setBlock(BASE.offset(-1, y + 1, 0), Blocks.STONE);
         Wolf wolf = mobAt(h, EntityType.WOLF, p, 0.35, 0.75);
@@ -282,25 +283,25 @@ final class ChainsawScenarios {
 
         h.check(p.rev(), "right-click should start the rev");
         p.holdUse(ChainsawCombat.WINDUP + 1);
-        List<Pig> sawn = List.of(ahead, right);
+        List<Pig> sawn = List.of(ahead, right, mid);
         boolean allSawn = sawn.stream().allMatch(ChainsawScenarios::hurt) && sawn.stream().allMatch(e -> effects(e)[1] == 1);
         boolean spared = !hurt(behind) && !hurt(side) && !hurt(wide) && !hurt(far) && !hurt(walled) && !hurt(wolf) && stand.isAlive();
         int cost = tool.getDamageValue();
-        LOG.info("[localchainsaws-test] sweep: ahead/right sawn {}, behind/side/wide/far/walled/own wolf/armor stand spared {} (wide {} far {}), durability {}",
+        LOG.info("[localchainsaws-test] sweep: ahead/right/2.65 blocks sawn {}, behind/side/wide/far/walled/own wolf/armor stand spared {} (wide {} far {}), durability {}",
                 allSawn, spared, hurt(wide) ? "HURT" : "spared", hurt(far) ? "HURT" : "spared", cost);
-        h.check(allSawn, "both pigs just ahead should be sawn once");
+        h.check(allSawn, "both pigs just ahead and the one 2.65 blocks off should be sawn once");
         h.check(!hurt(wide), "a pig 27 degrees off should be outside the 45 degree cone");
-        h.check(!hurt(far), "a pig 2.65 blocks away should be beyond the chain's 2-block reach");
+        h.check(!hurt(far), "a pig 3.62 blocks away should be beyond the chain's 3-block reach");
         h.check(spared, "nothing behind, beside, out of reach, behind a wall, the own wolf or the armor stand should be hurt");
-        h.check(cost == 2, "2 pigs sawn should cost 2 durability, cost " + cost);
+        h.check(cost == 3, "3 pigs sawn should cost 3 durability, cost " + cost);
 
         // Turn to the walled pig: the wall stops the chain; take the wall away and it bites.
         p.face(90, 30.3F); // west, -x, at the walled pig's middle
         p.holdUse(ChainsawCombat.REV_INTERVAL);
-        h.check(!hurt(walled) && tool.getDamageValue() == 2, "the chain should not saw through a wall");
+        h.check(!hurt(walled) && tool.getDamageValue() == 3, "the chain should not saw through a wall");
         for (int y = 0; y < 3; y++) h.setBlock(BASE.offset(-1, y + 1, 0), Blocks.AIR);
         p.holdUse(ChainsawCombat.REV_INTERVAL);
-        h.check(hurt(walled) && tool.getDamageValue() == 3, "without the wall the pig should be sawn");
+        h.check(hurt(walled) && tool.getDamageValue() == 4, "without the wall the pig should be sawn");
         p.releaseUsingItem();
         h.pass();
     }
