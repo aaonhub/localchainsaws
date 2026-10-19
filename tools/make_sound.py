@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Synthesizes the chainsaw sounds from scratch (two-stroke engine pulses + chain noise), writes WAVs and encodes them to
-Ogg Vorbis with ffmpeg. Usage: make_sound.py [cut|hit|rev ...] (default: all three)
+Ogg Vorbis with ffmpeg. Usage: make_sound.py [cut|hit|rev|revup|revdown ...] (default: all five)
   cut: rev up, cut through wood, idle down (felling a tree)
   hit: a short throttle blip with the chain biting (a melee hit)
-  rev: a seamless 2 s loop of the engine held at high revs (holding right-click)"""
+  rev: a seamless 2 s loop of the engine held at high revs (holding right-click, once revved up)
+  revup: idle to the rev loop's 150 Hz in 0.6 s (the wind-up when right-click is pressed)
+  revdown: from the rev loop's 150 Hz down to idle, with a couple of sputters (right-click let go)"""
 import subprocess, sys, tempfile, wave
 from pathlib import Path
 import numpy as np
@@ -87,7 +89,44 @@ def rev():
     return mix / (np.max(np.abs(mix)) * 1.15)
 
 
-SOUNDS = {"cut": ("chainsaw_cut", cut), "hit": ("chainsaw_hit", hit), "rev": ("chainsaw_rev", rev)}
+def sweep(f, seed):
+    """Engine + exhaust rasp + chain whine for a firing-rate curve f; the whine and hiss follow the revs."""
+    t = np.arange(f.size) / SR
+    rng = np.random.default_rng(seed)
+    engine, frac = engine_pulses(f)
+    noise = rng.standard_normal(t.size)
+    rasp = (noise - np.convolve(noise, np.ones(8) / 8, mode="same")) * np.exp(-frac * 4.5) * 0.3
+    speed = np.clip((f - 45) / 105, 0, 1.1)  # 0 at idle, 1 at the rev loop's 150 Hz
+    tooth = np.cumsum(900 * f / 150) / SR
+    whine = (np.sin(2 * np.pi * tooth) + 0.4 * np.sin(4 * np.pi * tooth)) * 0.07 * speed
+    hiss = (np.convolve(noise, np.ones(3) / 3, mode="same") - np.convolve(noise, np.ones(10) / 10, mode="same")) * 0.25 * speed
+    return 0.8 * engine + rasp + whine + hiss
+
+
+def revup():
+    dur = 0.75
+    t = np.arange(int(SR * dur)) / SR
+    # A tug of the throttle: idle 45 Hz, catches, climbs to the loop's 150 Hz by 0.6 s with a small overshoot.
+    f = np.interp(t, [0, 0.08, 0.45, 0.6, 0.66, dur], [45, 55, 140, 155, 150, 150]) * (1 + 0.02 * np.sin(2 * np.pi * 9 * t))
+    mix = sweep(f, 1021)
+    mix *= np.interp(t, [0, 0.02, 0.6, dur], [0, 0.75, 1, 0])
+    return mix / (np.max(np.abs(mix)) * 1.15)
+
+
+def revdown():
+    dur = 0.9
+    t = np.arange(int(SR * dur)) / SR
+    # Throttle released: 150 Hz falls to idle with two misfires (sputters) on the way down.
+    f = np.interp(t, [0, 0.05, 0.4, 0.7, dur], [150, 140, 70, 50, 45])
+    mix = sweep(f, 1022)
+    for at in (0.32, 0.5):
+        mix *= 1 - 0.7 * np.exp(-((t - at) / 0.02) ** 2)
+    mix *= np.interp(t, [0, 0.01, 0.35, dur], [0, 1, 0.75, 0])
+    return mix / (np.max(np.abs(mix)) * 1.2)
+
+
+SOUNDS = {"cut": ("chainsaw_cut", cut), "hit": ("chainsaw_hit", hit), "rev": ("chainsaw_rev", rev),
+          "revup": ("chainsaw_rev_up", revup), "revdown": ("chainsaw_rev_down", revdown)}
 
 
 def encode(name, mix):

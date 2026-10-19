@@ -7,7 +7,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.InteractionResult;
+import net.minecraft.world.InteractionResultHolder;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.AxeItem;
@@ -21,7 +21,7 @@ import org.jetbrains.annotations.Nullable;
 /**
  * A real axe (mines wood at axe speed, strips logs, takes axe enchantments) that also fells whole trees (see
  * {@link TreeFeller}) and fights like a chainsaw (see {@link ChainsawCombat}): swings rev and throw sparks, holding
- * right-click on a mob or player revs the chain into it.
+ * right-click revs the engine up and then saws everything just in front of the player.
  */
 public class ChainsawItem extends AxeItem {
     private final int maxLogs;
@@ -42,11 +42,17 @@ public class ChainsawItem extends AxeItem {
         return hurt;
     }
 
+    /**
+     * Right-click anywhere (air, a mob, or a block that has no right-click use of its own: logs still get stripped)
+     * starts the engine; it saws once revved up, for as long as right-click is held.
+     */
     @Override
-    public InteractionResult interactLivingEntity(ItemStack stack, Player player, LivingEntity target, InteractionHand hand) {
-        if (!ChainsawCombat.canStartRev(player, stack, hand)) return InteractionResult.PASS;
+    public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+        ItemStack stack = player.getItemInHand(hand);
+        if (!ChainsawCombat.canStartRev(player, stack, hand)) return InteractionResultHolder.pass(stack);
         player.startUsingItem(hand);
-        return InteractionResult.sidedSuccess(player.level().isClientSide);
+        ChainsawCombat.revUp(level, player);
+        return InteractionResultHolder.consume(stack);
     }
 
     @Override
@@ -57,6 +63,11 @@ public class ChainsawItem extends AxeItem {
     @Override
     public void onUseTick(Level level, LivingEntity user, ItemStack stack, int remainingUseTicks) {
         if (user instanceof ServerPlayer player) ChainsawCombat.revTick(player, stack, getUseDuration(stack) - remainingUseTicks);
+    }
+
+    @Override
+    public void onStopUsing(ItemStack stack, LivingEntity entity, int count) {
+        if (entity instanceof ServerPlayer player) ChainsawCombat.revDown(player, getUseDuration(stack) - count);
     }
 
     @Override

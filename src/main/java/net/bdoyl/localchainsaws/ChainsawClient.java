@@ -1,6 +1,7 @@
 package net.bdoyl.localchainsaws;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 import java.util.HashMap;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
@@ -30,8 +31,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Client side of {@link ChainsawCombat}: the rev loop (for every player this client sees revving, itself included),
- * the spark and blood particles, and the shaking hold while revving.
+ * Client side of {@link ChainsawCombat}: the rev loop (for every player this client sees revving, itself included; it
+ * comes in as the server-sent rev-up sound reaches the top), the spark and blood particles, and the chainsaw being
+ * brought up during the wind-up and shaking once revved.
  *
  * With -Dlocalchainsaws.clientcheck=true it also logs "[localchainsaws-clientcheck] ..." lines for every chainsaw sound
  * the client plays and the particles it spawns, for the headless client test.
@@ -90,10 +92,20 @@ public final class ChainsawClient {
         }
     }
 
-    /** The engine held at high revs while a player holds right-click with a chainsaw; follows them, fades out on release. */
+    /** How far along the wind-up a revving player is: 0 just pressed, 1 revved up (sawing). */
+    static float windup(LivingEntity entity, float partialTick) {
+        return Mth.clamp((entity.getTicksUsingItem() + partialTick) / ChainsawCombat.WINDUP, 0.0F, 1.0F);
+    }
+
+    /**
+     * The engine held at high revs while a player holds right-click with a revved-up chainsaw: silent during the
+     * wind-up (the rev-up sound plays then), fades in as that one tops out, follows the player, fades out on release
+     * under the rev-down sound.
+     */
     static final class RevSound extends AbstractTickableSoundInstance {
         private final Player player;
-        private int age, fade;
+        private int fade;
+        private boolean logged;
 
         RevSound(Player player) {
             super(LocalChainsaws.CHAINSAW_REV.get(), SoundSource.PLAYERS, player.getRandom());
@@ -101,7 +113,7 @@ public final class ChainsawClient {
             this.looping = true;
             this.delay = 0;
             this.volume = 0.0F;
-            this.pitch = 0.8F;
+            this.pitch = 1.0F;
             this.x = player.getX();
             this.y = player.getY();
             this.z = player.getZ();
@@ -122,14 +134,19 @@ public final class ChainsawClient {
             y = player.getY();
             z = player.getZ();
             if (isRevving(player)) {
-                age++;
-                volume = Math.min(0.9F, 0.25F + age * 0.08F);
-                pitch = Math.min(1.1F, 0.8F + age * 0.04F); // spins up over ~8 ticks
-            } else if (++fade > 4) {
+                // In over the last 3 ticks of the wind-up, as the rev-up sound reaches the loop's revs.
+                int in = player.getTicksUsingItem() - (ChainsawCombat.WINDUP - 3);
+                volume = Mth.clamp(in * 0.25F, 0.0F, 0.9F);
+                if (CHECK && volume > 0 && !logged) {
+                    logged = true;
+                    LOG.info("[localchainsaws-clientcheck] revved up: rev loop audible for {} after {} ticks", player.getGameProfile().getName(),
+                            player.getTicksUsingItem());
+                }
+            } else if (++fade > 3) {
                 stop();
             } else {
-                volume *= 0.55F;
-                pitch *= 0.95F;
+                volume *= 0.4F;
+                pitch *= 0.94F;
             }
         }
     }
@@ -217,7 +234,10 @@ public final class ChainsawClient {
         }
     }
 
-    /** While revving, the chainsaw shakes with the engine in first person (others see it bite: a swing per hit). */
+    /**
+     * First person: during the wind-up the chainsaw is brought up and forward with a growing judder, then held out
+     * shaking with the engine while it saws (others see it bite: a swing per sweep that hits).
+     */
     static final IClientItemExtensions ITEM_EXTENSIONS = new IClientItemExtensions() {
         @Override
         public boolean applyForgeHandTransform(PoseStack pose, LocalPlayer player, HumanoidArm arm, ItemStack stack, float partialTick,
@@ -225,9 +245,14 @@ public final class ChainsawClient {
             InteractionHand hand = arm == player.getMainArm() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
             if (!isRevving(player) || player.getUsedItemHand() != hand) return false;
             float t = player.tickCount + partialTick;
+            float up = windup(player, partialTick);
+            float ease = up * up * (3 - 2 * up);
+            float shake = up < 1.0F ? 0.004F + 0.006F * up : 0.014F;
             int side = arm == HumanoidArm.RIGHT ? 1 : -1;
-            // Vanilla's resting hand position, pushed forward a little, plus a fast engine judder.
-            pose.translate(side * 0.56F + Mth.sin(t * 2.9F) * 0.012F, -0.52F + Mth.cos(t * 3.7F) * 0.012F, -0.78F);
+            // Vanilla's resting hand position, raised and pushed forward over the wind-up, plus the engine judder.
+            pose.translate(side * (0.56F - 0.04F * ease) + Mth.sin(t * 2.9F) * shake, -0.52F + 0.08F * ease + Mth.cos(t * 3.7F) * shake,
+                    -0.72F - 0.08F * ease);
+            pose.mulPose(Axis.XP.rotationDegrees(-6.0F * ease));
             return true;
         }
     };

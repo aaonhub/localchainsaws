@@ -9,6 +9,7 @@ import java.util.UUID;
 import java.util.function.Predicate;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.data.worldgen.features.TreeFeatures;
 import net.minecraft.resources.ResourceKey;
@@ -16,6 +17,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
@@ -23,6 +25,8 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.animal.IronGolem;
 import net.minecraft.world.entity.animal.Pig;
+import net.minecraft.world.entity.animal.Wolf;
+import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -70,9 +74,11 @@ final class ChainsawScenarios {
         ALL.put("neighbour_tree_keeps_its_leaves", new Scenario(ChainsawScenarios::neighbourTreeKeepsItsLeaves, 100));
         // Fighting with it (ChainsawCombat).
         ALL.put("swing_deals_axe_damage_with_effects", new Scenario(ChainsawScenarios::swingDealsAxeDamageWithEffects, 40));
+        ALL.put("rev_winds_up_before_sawing", new Scenario(ChainsawScenarios::revWindsUpBeforeSawing, 80));
         ALL.put("rev_slightly_beats_axe_dps", new Scenario(ChainsawScenarios::revSlightlyBeatsAxeDps, 100));
+        ALL.put("rev_saws_everything_in_front", new Scenario(ChainsawScenarios::revSawsEverythingInFront, 80));
         ALL.put("rev_stops_at_one_durability", new Scenario(ChainsawScenarios::revStopsAtOneDurability, 100));
-        ALL.put("rev_needs_a_mob_in_reach", new Scenario(ChainsawScenarios::revNeedsAMobInReach, 60));
+        ALL.put("rev_starts_anywhere_and_breaks_no_blocks", new Scenario(ChainsawScenarios::revStartsAnywhereAndBreaksNoBlocks, 80));
         ALL.put("felling_still_works_after_revving", new Scenario(ChainsawScenarios::fellingStillWorksAfterRevving, 100));
     }
 
@@ -90,17 +96,27 @@ final class ChainsawScenarios {
             attackStrengthTicker = 100;
         }
 
-        private int used;
-
-        /** Right-click on {@code target} (the real interaction path); true when that started the rev. */
-        boolean rev(LivingEntity target) {
-            used = 0;
-            return interactOn(target, InteractionHand.MAIN_HAND).consumesAction() && isUsingItem();
+        /** Right-click with nothing in the way (the real server path for right-click in the air or on a mob that has no use of its own). */
+        boolean rev() {
+            return gameMode.useItem(this, level(), getMainHandItem(), InteractionHand.MAIN_HAND).consumesAction() && isUsingItem();
         }
 
-        /** Holding right-click for {@code ticks} ticks: the item's use tick, as LivingEntity.tick would call it. */
+        /** Right-click on a block: the block and the item get it first (the real server path); only if neither uses it, the item is used. */
+        InteractionResult rightClickBlock(BlockHitResult hit) {
+            InteractionResult r = gameMode.useItemOn(this, level(), getMainHandItem(), InteractionHand.MAIN_HAND, hit);
+            return r.consumesAction() ? r : gameMode.useItem(this, level(), getMainHandItem(), InteractionHand.MAIN_HAND);
+        }
+
+        /** Holding right-click for {@code ticks} ticks: the item-use update LivingEntity.tick runs (fake players never tick). */
         void holdUse(int ticks) {
-            for (int i = 0; i < ticks && isUsingItem(); i++) getUseItem().onUseTick(level(), this, getUseItem().getUseDuration() - used++);
+            for (int i = 0; i < ticks && isUsingItem(); i++) updateUsingItem(getUseItem());
+        }
+
+        /** Look straight ahead towards {@code yaw} (0 = south). */
+        void face(float yaw) {
+            setYRot(yaw);
+            setYHeadRot(yaw);
+            setXRot(0);
         }
     }
 
@@ -122,6 +138,24 @@ final class ChainsawScenarios {
         h.level().addFreshEntity(mob);
         p.lookAt(EntityAnchorArgument.Anchor.EYES, mob.position().add(0, mob.getBbHeight() * 0.6, 0));
         return mob;
+    }
+
+    /** A still mob ({@code NoAI}) with its feet at ({@code dx}, {@code dz}) from the fighter's feet. */
+    private static <T extends Mob> T mobAt(TestArena h, EntityType<T> type, Fighter p, double dx, double dz) {
+        T mob = type.create(h.level());
+        mob.moveTo(p.getX() + dx, p.getY(), p.getZ() + dz, 180, 0);
+        mob.setNoAi(true);
+        mob.setPersistenceRequired();
+        h.level().addFreshEntity(mob);
+        return mob;
+    }
+
+    private static boolean hurt(LivingEntity e) {
+        return e.getHealth() < e.getMaxHealth();
+    }
+
+    private static int[] engine(Fighter p) {
+        return ChainsawCombat.ENGINE.getOrDefault(p.getId(), new int[3]);
     }
 
     private static int[] effects(LivingEntity target) {
@@ -149,86 +183,170 @@ final class ChainsawScenarios {
     }
 
     /**
-     * Holding right-click on an iron golem (100 health, no knockback, no blood) for 2 s: 8 hits that together beat
-     * perfectly timed axe swings by about 10% (not a one-shot), 1 durability each.
+     * Pressing right-click starts the engine (rev-up, smoke) but nothing is sawn for the {@link ChainsawCombat#WINDUP}
+     * ticks of wind-up; the first bite comes on the tick it is revved up. Letting go winds it down, and pressing again
+     * starts a new wind-up.
+     */
+    static void revWindsUpBeforeSawing(TestArena h) {
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-windup", tool);
+        IronGolem golem = dummy(h, EntityType.IRON_GOLEM, p);
+        h.check(p.rev(), "right-click should start the engine");
+        h.check(engine(p)[0] == 1, "pressing right-click should rev up (sound + smoke)");
+        p.holdUse(ChainsawCombat.WINDUP);
+        boolean quietDuringWindup = !hurt(golem) && tool.getDamageValue() == 0 && engine(p)[1] == 0;
+        p.holdUse(1);
+        float bite = golem.getMaxHealth() - golem.getHealth();
+        LOG.info("[localchainsaws-test] wind-up: {} ticks without a bite: {}, then bite {} at tick {}, durability {}",
+                ChainsawCombat.WINDUP, quietDuringWindup, bite, p.getTicksUsingItem() - 1, tool.getDamageValue());
+        h.check(quietDuringWindup, "nothing should be sawn during the wind-up");
+        h.check(bite > 0 && tool.getDamageValue() == 1 && engine(p)[1] == 1, "the first bite should land the tick the saw is revved up");
+        p.releaseUsingItem();
+        h.check(!p.isUsingItem() && engine(p)[2] == 1, "letting go should stop the saw and wind it down");
+
+        float health = golem.getHealth();
+        h.check(p.rev(), "right-click again should restart the engine");
+        p.holdUse(ChainsawCombat.WINDUP);
+        h.check(golem.getHealth() == health && tool.getDamageValue() == 1, "a new press should wind up again before sawing");
+        p.releaseUsingItem();
+        h.check(p.rev(), "and again");
+        p.holdUse(3);
+        p.releaseUsingItem();
+        h.check(engine(p)[2] == 2, "a short tap should not play the wind-down");
+        h.pass();
+    }
+
+    /**
+     * Revved up on an iron golem (100 health, no knockback, no blood) for 2 s: 8 bites that together beat perfectly
+     * timed axe swings by about 10% (not a one-shot), 1 durability each.
      */
     static void revSlightlyBeatsAxeDps(TestArena h) {
         floor(h);
         ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
         Fighter p = fighter(h, "lcs-rev", tool);
         IronGolem golem = dummy(h, EntityType.IRON_GOLEM, p);
-        h.check(p.rev(golem), "right-click on the golem should start the rev");
-        p.holdUse(1);
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + 1);
         float first = golem.getMaxHealth() - golem.getHealth();
         p.holdUse(40);
-        float dealt = golem.getMaxHealth() - golem.getHealth();
+        float dealt = golem.getMaxHealth() - golem.getHealth() - first;
         double axeDps = p.getAttributeValue(Attributes.ATTACK_DAMAGE) * p.getAttributeValue(Attributes.ATTACK_SPEED);
         double revDps = dealt / 2.0;
         int[] fx = effects(golem);
-        LOG.info("[localchainsaws-test] rev: 2 s on an iron golem -> {} damage ({} per s, axe {} per s, x{}), durability used {}, effects rev={} blood={}",
+        LOG.info("[localchainsaws-test] rev: 2 s on an iron golem after the first bite -> {} damage ({} per s, axe {} per s, x{}), durability used {}, effects rev={} blood={}",
                 dealt, revDps, axeDps, String.format("%.2f", revDps / axeDps), tool.getDamageValue(), fx[1], fx[2]);
-        h.check(first == 0.0F, "the first rev hit should come after the chain spins up, not at once");
         h.check(revDps >= axeDps * 1.0 && revDps <= axeDps * 1.25, "rev DPS " + revDps + " should be 1.0-1.25x axe DPS " + axeDps);
-        h.check(dealt / 8 < p.getAttributeValue(Attributes.ATTACK_DAMAGE) * 0.35, "one rev hit should be a small bite, was " + dealt / 8);
+        h.check(first < p.getAttributeValue(Attributes.ATTACK_DAMAGE) * 0.35, "one rev hit should be a small bite, was " + first);
         h.check(golem.isAlive() && golem.getHealth() > 50, "the golem should still be standing");
-        h.check(tool.getDamageValue() == 8, "8 rev hits should cost 8 durability, cost " + tool.getDamageValue());
-        h.check(fx[1] == 8 && fx[2] == 0, "expected 8 rev impacts without blood on a golem, got rev=" + fx[1] + " blood=" + fx[2]);
+        h.check(tool.getDamageValue() == 9, "9 rev hits should cost 9 durability, cost " + tool.getDamageValue());
+        h.check(fx[1] == 9 && fx[2] == 0, "expected 9 rev impacts without blood on a golem, got rev=" + fx[1] + " blood=" + fx[2]);
         p.releaseUsingItem();
         h.check(!p.isUsingItem(), "letting go of right-click should stop the rev");
         h.pass();
     }
 
-    /** A worn chainsaw revs until it has 1 durability left, then stops by itself and won't start again. */
+    /**
+     * One sweep saws every mob in the cone within reach (three pigs ahead), and nothing behind, off to the side, out of
+     * reach, behind a wall, the player's own wolf or an armor stand. Each pig sawn costs 1 durability.
+     */
+    static void revSawsEverythingInFront(TestArena h) {
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-sweep", tool);
+        p.face(0); // south, +z
+        Pig ahead = mobAt(h, EntityType.PIG, p, 0, 2), left = mobAt(h, EntityType.PIG, p, 1.1, 2.3), right = mobAt(h, EntityType.PIG, p, -1.1, 2.3);
+        Pig behind = mobAt(h, EntityType.PIG, p, 0, -2), side = mobAt(h, EntityType.PIG, p, 2, 0.6), far = mobAt(h, EntityType.PIG, p, 0, 4.6);
+        Pig walled = mobAt(h, EntityType.PIG, p, -2.3, 0);
+        for (int y = 0; y < 3; y++) h.setBlock(BASE.offset(-1, y + 1, 0), Blocks.STONE);
+        Wolf wolf = mobAt(h, EntityType.WOLF, p, 0.6, 1.0);
+        wolf.setTame(true);
+        wolf.setOwnerUUID(p.getUUID());
+        ArmorStand stand = EntityType.ARMOR_STAND.create(h.level());
+        stand.moveTo(p.getX() - 0.6, p.getY(), p.getZ() + 1.0);
+        h.level().addFreshEntity(stand);
+
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + 1);
+        List<Pig> sawn = List.of(ahead, left, right);
+        boolean allSawn = sawn.stream().allMatch(ChainsawScenarios::hurt) && sawn.stream().allMatch(e -> effects(e)[1] == 1);
+        boolean spared = !hurt(behind) && !hurt(side) && !hurt(far) && !hurt(walled) && !hurt(wolf) && stand.isAlive();
+        int cost = tool.getDamageValue();
+        LOG.info("[localchainsaws-test] sweep: ahead/left/right sawn {}, behind/side/far/walled/own wolf/armor stand spared {}, durability {}",
+                allSawn, spared, cost);
+        h.check(allSawn, "all three pigs in front should be sawn once");
+        h.check(spared, "nothing behind, beside, out of reach, behind a wall, the own wolf or the armor stand should be hurt");
+        h.check(cost == 3, "3 pigs sawn should cost 3 durability, cost " + cost);
+
+        // Turn to the walled pig: the wall stops the chain; take the wall away and it bites.
+        p.face(90); // west, -x
+        p.holdUse(ChainsawCombat.REV_INTERVAL);
+        h.check(!hurt(walled) && tool.getDamageValue() == 3, "the chain should not saw through a wall");
+        for (int y = 0; y < 3; y++) h.setBlock(BASE.offset(-1, y + 1, 0), Blocks.AIR);
+        p.holdUse(ChainsawCombat.REV_INTERVAL);
+        h.check(hurt(walled) && tool.getDamageValue() == 4, "without the wall the pig should be sawn");
+        p.releaseUsingItem();
+        h.pass();
+    }
+
+    /** A worn chainsaw saws until it has 1 durability left, even mid-sweep, then stops by itself and won't start again. */
     static void revStopsAtOneDurability(TestArena h) {
         floor(h);
         ItemStack tool = new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get());
-        tool.setDamageValue(tool.getMaxDamage() - 4);
+        tool.setDamageValue(tool.getMaxDamage() - 3);
         Fighter p = fighter(h, "lcs-rev-worn", tool);
-        Pig pig = dummy(h, EntityType.PIG, p);
-        pig.getAttribute(Attributes.MAX_HEALTH).setBaseValue(200);
-        pig.setHealth(200);
-        h.check(p.rev(pig), "right-click on the pig should start the rev");
-        p.holdUse(60);
+        p.face(0);
+        List<Pig> pigs = List.of(mobAt(h, EntityType.PIG, p, 0, 2), mobAt(h, EntityType.PIG, p, 1.1, 2.3), mobAt(h, EntityType.PIG, p, -1.1, 2.3));
+        for (Pig pig : pigs) {
+            pig.getAttribute(Attributes.MAX_HEALTH).setBaseValue(200);
+            pig.setHealth(200);
+        }
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + 30);
         int left = tool.getMaxDamage() - tool.getDamageValue();
-        int[] fx = effects(pig);
-        LOG.info("[localchainsaws-test] worn rev: {} durability left, {} rev hits, still revving {}", left, fx[1], p.isUsingItem());
+        int bites = pigs.stream().mapToInt(e -> effects(e)[1]).sum(), bloody = pigs.stream().mapToInt(e -> effects(e)[2]).sum();
+        long sawn = pigs.stream().filter(ChainsawScenarios::hurt).count();
+        LOG.info("[localchainsaws-test] worn rev: {} durability left, {} bites on {} of 3 pigs, still revving {}", left, bites, sawn, p.isUsingItem());
         h.check(!tool.isEmpty() && left == 1, "the chainsaw should end on 1 durability, has " + left);
-        h.check(fx[1] == 3 && fx[2] == 3, "expected 3 bloody rev hits before it stopped, got " + fx[1]);
+        h.check(bites == 2 && bloody == 2 && sawn == 2, "expected 2 bloody bites before it stopped, got " + bites);
         h.check(!p.isUsingItem(), "the rev should stop by itself at 1 durability");
-        h.check(pig.getDeltaMovement().horizontalDistance() < 1.0E-6, "rev hits should not knock the pig back");
-        h.check(!p.rev(pig), "a chainsaw on 1 durability should not rev");
+        h.check(pigs.stream().allMatch(e -> e.getDeltaMovement().horizontalDistance() < 1.0E-6), "rev hits should not knock the pigs back");
+        h.check(!p.rev(), "a chainsaw on 1 durability should not rev");
         h.pass();
     }
 
     /**
-     * The rev only starts on a mob: right-click in the air does nothing, on a log it still strips it, and with a shield
-     * in the off hand right-click keeps blocking (the rev needs both hands).
+     * Right-click revs from anywhere: in the air (a pig 5 blocks off is out of reach), or on a block without a use of
+     * its own, which stays put. On a log it still strips it instead, and with a shield in the off hand right-click
+     * keeps blocking.
      */
-    static void revNeedsAMobInReach(TestArena h) {
+    static void revStartsAnywhereAndBreaksNoBlocks(TestArena h) {
         floor(h);
         ItemStack tool = new ItemStack(LocalChainsaws.NETHERITE_CHAINSAW.get());
         Fighter p = fighter(h, "lcs-rev-air", tool);
-        h.check(!tool.use(h.level(), p, InteractionHand.MAIN_HAND).getResult().consumesAction() && !p.isUsingItem(), "right-click in the air should not rev");
-
-        BlockPos log = BASE.offset(1, 0, 0);
-        h.setBlock(log, Blocks.OAK_LOG);
-        BlockHitResult face = new BlockHitResult(Vec3.atCenterOf(h.abs(log)), net.minecraft.core.Direction.WEST, h.abs(log), false);
-        h.check(tool.useOn(new UseOnContext(p, InteractionHand.MAIN_HAND, face)).consumesAction(), "right-click on a log should strip it");
-        h.check(h.getBlockState(log).is(Blocks.STRIPPED_OAK_LOG) && !p.isUsingItem(), "the log should be stripped, and no rev");
-
-        Pig pig = dummy(h, EntityType.PIG, p);
-        p.setItemInHand(InteractionHand.OFF_HAND, new ItemStack(Items.SHIELD));
-        h.check(!p.rev(pig), "with a shield in the off hand the rev should not start");
-        p.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY);
-
-        // Revving at a mob that is out of reach (6 blocks) bites nothing.
-        int stripCost = tool.getDamageValue(); // stripping costs 1 durability, like any axe
-        h.check(p.rev(pig), "right-click on the pig should start the rev");
-        pig.moveTo(pig.getX(), pig.getY(), pig.getZ() + 4);
-        p.lookAt(EntityAnchorArgument.Anchor.EYES, pig.position().add(0, 0.5, 0));
-        p.holdUse(20);
-        h.check(pig.getHealth() == pig.getMaxHealth() && tool.getDamageValue() == stripCost, "a mob out of reach should not be hurt");
+        p.face(0);
+        Pig far = mobAt(h, EntityType.PIG, p, 0, 5);
+        h.check(p.rev(), "right-click in the air should start the engine");
+        p.holdUse(ChainsawCombat.WINDUP + 20);
+        h.check(p.isUsingItem() && !hurt(far) && tool.getDamageValue() == 0, "revving at nothing should hurt nothing and cost nothing");
         p.releaseUsingItem();
+
+        BlockPos log = BASE.offset(1, 1, 0), stone = BASE.offset(-1, 1, 0);
+        h.setBlock(log, Blocks.OAK_LOG);
+        h.setBlock(stone, Blocks.STONE);
+        InteractionResult onLog = p.rightClickBlock(new BlockHitResult(Vec3.atCenterOf(h.abs(log)), Direction.WEST, h.abs(log), false));
+        h.check(onLog.consumesAction() && h.getBlockState(log).is(Blocks.STRIPPED_OAK_LOG) && !p.isUsingItem(),
+                "right-click on a log should strip it, not rev");
+        int stripCost = tool.getDamageValue(); // stripping costs 1 durability, like any axe
+        InteractionResult onStone = p.rightClickBlock(new BlockHitResult(Vec3.atCenterOf(h.abs(stone)), Direction.EAST, h.abs(stone), false));
+        h.check(onStone.consumesAction() && p.isUsingItem(), "right-click on stone should start the engine");
+        p.holdUse(ChainsawCombat.WINDUP + 20);
+        h.check(h.getBlockState(stone).is(Blocks.STONE) && h.getBlockState(log).is(Blocks.STRIPPED_OAK_LOG), "revving should not break blocks");
+        h.check(tool.getDamageValue() == stripCost, "revving at blocks should cost no durability");
+        p.releaseUsingItem();
+
+        p.setItemInHand(InteractionHand.OFF_HAND, new ItemStack(Items.SHIELD));
+        h.check(!p.rev(), "with a shield in the off hand the rev should not start");
         h.pass();
     }
 
@@ -240,8 +358,8 @@ final class ChainsawScenarios {
         ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
         Fighter p = fighter(h, "lcs-rev-fell", tool);
         IronGolem golem = dummy(h, EntityType.IRON_GOLEM, p);
-        h.check(p.rev(golem), "right-click on the golem should start the rev");
-        p.holdUse(11);
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.REV_INTERVAL + 1);
         p.releaseUsingItem();
         int revCost = tool.getDamageValue();
         golem.discard();

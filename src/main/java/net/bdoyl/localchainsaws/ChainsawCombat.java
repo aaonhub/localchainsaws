@@ -1,7 +1,11 @@
 package net.bdoyl.localchainsaws;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
@@ -9,19 +13,24 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.TagKey;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.OwnableEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -33,16 +42,23 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 /**
  * The chainsaw as a weapon. A normal swing is a vanilla axe hit plus a rev sound and sparks/blood at the impact. Holding
- * right-click on a mob or player revs the chain into it: a hit every {@link #REV_INTERVAL} ticks worth slightly more
- * than axe DPS in total ({@link #REV_DPS_FACTOR}), 1 durability per hit, never below 1 durability. All server side; the
- * sound and particles are broadcast to everyone nearby, and the rev loop is played by each client for every player it
- * sees using a chainsaw (the "using an item" flag is synced vanilla entity data), see ChainsawClient.
+ * right-click anywhere starts the engine: a rev-up and a puff of smoke, {@link #WINDUP} ticks of wind-up, then every
+ * {@link #REV_INTERVAL} ticks the chain saws every living thing in a {@link #CONE_DEGREES} cone in front of the player
+ * within attack reach. Each one takes slightly more than axe DPS ({@link #REV_DPS_FACTOR}) and costs 1 durability,
+ * never below 1 durability. Letting go winds it down. All server side; the sound and particles are broadcast to
+ * everyone nearby, and the rev loop is played by each client for every player it sees revved up (the "using an item"
+ * flag is synced vanilla entity data), see ChainsawClient.
  */
 public final class ChainsawCombat {
-    /** Ticks between two rev hits (4 a second). */
+    /** Ticks of wind-up after right-click is pressed before the chain saws anything. */
+    static final int WINDUP = 12;
+    /** Ticks between two sweeps once revved up (4 a second). */
     static final int REV_INTERVAL = 5;
-    /** Rev damage per second compared to perfectly timed axe swings (damage x attack speed). */
+    /** Rev damage per second compared to perfectly timed axe swings (damage x attack speed), for each thing sawn. */
     static final float REV_DPS_FACTOR = 1.1F;
+    /** Width of the area sawn: everything within this many degrees of where the player looks, within attack reach. */
+    static final double CONE_DEGREES = 60.0;
+    private static final double CONE_COS = Math.cos(Math.toRadians(CONE_DEGREES / 2));
 
     static final ResourceKey<DamageType> CHAINSAW_DAMAGE =
             ResourceKey.create(Registries.DAMAGE_TYPE, new ResourceLocation(LocalChainsaws.MODID, "chainsaw"));
@@ -55,10 +71,11 @@ public final class ChainsawCombat {
     /** Effects per target entity id, only kept while the test scenarios run. */
     static boolean recordEffects;
     static final Map<Integer, int[]> EFFECTS = new HashMap<>(); // {melee hits, rev hits, with blood}
+    static final Map<Integer, int[]> ENGINE = new HashMap<>(); // per player id: {rev-ups, revved, rev-downs}
 
     private ChainsawCombat() {}
 
-    /** Right-click on a living entity: start revving (main hand only; a shield in the off hand keeps blocking). */
+    /** Right-click with a chainsaw: start the engine (main hand only; a shield in the off hand keeps blocking). */
     static boolean canStartRev(Player player, ItemStack stack, InteractionHand hand) {
         return hand == InteractionHand.MAIN_HAND && hasFuel(stack)
                 && !player.getOffhandItem().canPerformAction(ToolActions.SHIELD_BLOCK);
@@ -69,16 +86,58 @@ public final class ChainsawCombat {
         return !stack.isDamageableItem() || stack.getMaxDamage() - stack.getDamageValue() > 1;
     }
 
+    /**
+     * Right-click pressed (both sides): the rev-up sound, played at once on the player's own client and sent by the
+     * server to everyone else nearby, and a puff of smoke from the engine.
+     */
+    static void revUp(Level level, Player player) {
+        level.playSound(player, player.getX(), player.getY(), player.getZ(), LocalChainsaws.CHAINSAW_REV_UP.get(),
+                SoundSource.PLAYERS, 0.9F, 1.0F);
+        if (level instanceof ServerLevel server) {
+            puff(server, player, 5, 0.02);
+            if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[3])[0]++;
+        }
+    }
+
+    /** Right-click let go (or the rev stopped): the engine winds down, unless it was only a tap. */
+    static void revDown(ServerPlayer player, int ticksUsed) {
+        if (ticksUsed < WINDUP / 2) return;
+        ServerLevel level = player.serverLevel();
+        level.playSound(null, player.getX(), player.getY(), player.getZ(), LocalChainsaws.CHAINSAW_REV_DOWN.get(),
+                SoundSource.PLAYERS, 0.9F, 1.0F);
+        puff(level, player, 3, 0.01);
+        if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[3])[2]++;
+    }
+
     /** Called every tick the player holds right-click with a chainsaw (server side). */
     static void revTick(ServerPlayer player, ItemStack stack, int ticksUsed) {
-        if (ticksUsed <= 0 || ticksUsed % REV_INTERVAL != 0) return;
+        if (ticksUsed == WINDUP) {
+            puff(player.serverLevel(), player, 8, 0.04); // revved up: the exhaust coughs
+            if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[3])[1]++;
+        }
+        if (ticksUsed < WINDUP || (ticksUsed - WINDUP) % REV_INTERVAL != 0) return;
         if (!hasFuel(stack)) {
             player.stopUsingItem();
             return;
         }
-        LivingEntity target = targetInReach(player);
-        if (target == null || !target.isAttackable() || target.skipAttackInteraction(player)) return;
-        if (!ForgeHooks.onPlayerAttackTarget(player, target)) return; // claims / protection mods said no
+        LivingEntity last = null;
+        for (LivingEntity target : targetsInReach(player)) {
+            if (bite(player, stack, target)) last = target;
+            if (!hasFuel(stack)) break;
+        }
+        if (last != null) {
+            // Each bite uses up the swing cooldown, so rev-then-swing is no faster than either alone.
+            player.resetAttackStrengthTicker();
+            player.setLastHurtMob(last);
+            player.swing(InteractionHand.MAIN_HAND, true);
+        }
+        if (!hasFuel(stack)) player.stopUsingItem(); // stops on 1 durability, never breaks
+    }
+
+    /** One rev hit on one target; true if it landed (1 durability, food, sparks/blood). */
+    private static boolean bite(ServerPlayer player, ItemStack stack, LivingEntity target) {
+        if (!target.isAttackable() || target.skipAttackInteraction(player)) return false;
+        if (!ForgeHooks.onPlayerAttackTarget(player, target)) return false; // claims / protection mods said no
 
         float damage = revDamage(player, stack, target);
         ServerLevel level = player.serverLevel();
@@ -96,14 +155,11 @@ public final class ChainsawCombat {
             revTarget = null;
             target.invulnerableTime = cooldown;
         }
-        // Each bite uses up the swing cooldown, so rev-then-swing is no faster than either alone.
-        player.resetAttackStrengthTicker();
-        if (!hurt) return;
-        player.setLastHurtMob(target);
+        if (!hurt) return false;
         player.causeFoodExhaustion(0.05F);
-        player.swing(InteractionHand.MAIN_HAND, true);
         stack.hurtAndBreak(1, player, p -> p.broadcastBreakEvent(InteractionHand.MAIN_HAND));
         impact(level, player, target, true);
+        return true;
     }
 
     /** Damage of one rev hit: (axe damage incl. Sharpness/Smite/Strength) x attack speed x factor / hits per second. */
@@ -111,6 +167,59 @@ public final class ChainsawCombat {
         double perSwing = player.getAttributeValue(Attributes.ATTACK_DAMAGE) + EnchantmentHelper.getDamageBonus(stack, target.getMobType());
         double swingsPerSecond = player.getAttributeValue(Attributes.ATTACK_SPEED);
         return (float) (perSwing * swingsPerSecond * REV_DPS_FACTOR * REV_INTERVAL / 20.0);
+    }
+
+    /**
+     * Everything the chain reaches, nearest first: the mob under the crosshair, plus every living thing whose box comes
+     * within attack reach inside the cone in front of the player, not behind a block. Never the player, what they ride
+     * or who rides with them, teammates, their own pets, or armor stands; someone else's pet only when aimed at.
+     */
+    static List<LivingEntity> targetsInReach(Player player) {
+        double reach = player.getEntityReach();
+        Vec3 eye = player.getEyePosition();
+        Vec3 look = player.getViewVector(1.0F);
+        LivingEntity aimed = targetInReach(player);
+        List<LivingEntity> found = new ArrayList<>();
+        for (LivingEntity e : player.level().getEntitiesOfClass(LivingEntity.class, player.getBoundingBox().inflate(reach + 1.0),
+                e -> e != player && e.isAlive() && !e.isSpectator() && e.isPickable())) {
+            if (!maySaw(player, e, e == aimed)) continue;
+            if (e == aimed || inCone(player, eye, look, reach, e.getBoundingBox())) found.add(e);
+        }
+        found.sort(Comparator.comparingDouble(e -> e.getBoundingBox().distanceToSqr(eye)));
+        return found;
+    }
+
+    private static boolean maySaw(Player player, LivingEntity e, boolean aimed) {
+        if (e instanceof ArmorStand || e.getRootVehicle() == player.getRootVehicle() || player.isAlliedTo(e)) return false;
+        if (e instanceof OwnableEntity pet && pet.getOwnerUUID() != null) return aimed && !pet.getOwnerUUID().equals(player.getUUID());
+        return true;
+    }
+
+    /** The part of the box nearest the line of sight is within reach, inside the cone, and not behind a block. */
+    private static boolean inCone(Player player, Vec3 eye, Vec3 look, double reach, AABB box) {
+        if (box.contains(eye)) return true;
+        Vec3 center = box.getCenter();
+        Vec3 onSight = eye.add(look.scale(Mth.clamp(center.subtract(eye).dot(look), 0.0, reach)));
+        Vec3 near = new Vec3(Mth.clamp(onSight.x, box.minX, box.maxX), Mth.clamp(onSight.y, box.minY, box.maxY),
+                Mth.clamp(onSight.z, box.minZ, box.maxZ));
+        Vec3 to = near.subtract(eye);
+        double dist = to.length();
+        if (dist > reach || to.dot(look) < dist * CONE_COS) return false;
+        return clear(player, eye, near) || clear(player, eye, center);
+    }
+
+    private static boolean clear(Player player, Vec3 from, Vec3 to) {
+        return player.level().clip(new ClipContext(from, to, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, player))
+                .getType() == HitResult.Type.MISS;
+    }
+
+    /** Smoke from the engine, at the chainsaw in the player's main hand, seen by everyone nearby. */
+    private static void puff(ServerLevel level, Player player, int count, double speed) {
+        Vec3 look = player.getViewVector(1.0F);
+        float yaw = player.getYRot() * Mth.DEG_TO_RAD;
+        double side = player.getMainArm() == HumanoidArm.RIGHT ? 1 : -1;
+        Vec3 at = player.getEyePosition().add(look.scale(0.6)).add(-Mth.cos(yaw) * 0.35 * side, -0.45, -Mth.sin(yaw) * 0.35 * side);
+        level.sendParticles(ParticleTypes.SMOKE, at.x, at.y, at.z, count, 0.06, 0.04, 0.06, speed);
     }
 
     /** The living entity under the crosshair within attack reach, not behind a block. */
@@ -152,10 +261,11 @@ public final class ChainsawCombat {
         }
     }
 
-    /** Where the attacker's line of sight enters the target's box, else the middle of it. */
+    /** Where the attacker's line of sight enters the target's box, else where the side facing them is, else its middle. */
     static Vec3 impactPoint(Player attacker, LivingEntity target) {
         Vec3 eye = attacker.getEyePosition();
         AABB box = target.getBoundingBox();
-        return box.clip(eye, eye.add(attacker.getViewVector(1.0F).scale(8.0))).orElse(box.getCenter());
+        return box.clip(eye, eye.add(attacker.getViewVector(1.0F).scale(8.0)))
+                .or(() -> box.clip(eye, box.getCenter())).orElse(box.getCenter());
     }
 }

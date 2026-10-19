@@ -28,19 +28,29 @@ Our own clean-room code, art and sound, MIT licensed.
 - **Swing** (left-click): a normal axe hit (same damage, cooldown, shield-disabling and 2 durability as the vanilla axe
   of the tier) plus a rev burst sound and sparks and blood where the chain meets the mob. Skeletons, golems, slimes,
   blazes and the like get extra sparks instead of blood (`data/localchainsaws/tags/entity_types/bloodless.json`).
-- **Hold right-click on a mob or player** to rev into it: a bite every 5 ticks (4 a second) that together deal 1.1x
-  the damage per second of perfectly timed axe swings (axe damage incl. Sharpness/Smite/Strength x attack speed), so
-  iron ~8.9, diamond ~9.9, netherite ~11 per second against no armour. Each bite costs 1 durability; the rev stops by
-  itself with 1 durability left (the chainsaw never breaks from revving) and won't start again until it's repaired.
+- **Hold right-click** (anywhere: in the air, at a mob, at the ground) to start the engine: a rev-up sound and a puff
+  of smoke, and 12 ticks (0.6 s) of wind-up while the saw is brought up. Once it's revved up, as long as right-click is
+  held, the chain saws **everything in front of you** every 5 ticks (4 times a second): every living thing whose
+  hitbox is within attack reach (3 blocks in survival) inside a 60° cone around where you look, not behind a block.
+  Letting go winds the engine down (rev-down sound, a little smoke); press again for a new wind-up.
+  - Each thing sawn takes 1.1x the damage per second of perfectly timed axe swings (axe damage incl.
+    Sharpness/Smite/Strength x attack speed), so iron ~8.9, diamond ~9.9, netherite ~11 per second against no armour,
+    and costs 1 durability. The saw stops by itself with 1 durability left, even in the middle of a sweep (it never
+    breaks from revving), and won't start again until it's repaired.
+  - Never sawn: you, what you're riding (and anyone riding with you), teammates, your own pets, armor stands.
+    Someone else's tamed pet only when it's under your crosshair. Players are sawn like mobs where PvP is on.
   - Bites don't knock the target back (it stays in the chain), use up the swing cooldown (rev-then-swing is no faster),
     respect the usual attack checks (PvP setting, claim/protection mods via `AttackEntityEvent`, shields block them),
     and kills read "X was shredded by Y" (damage type `localchainsaws:chainsaw`).
-  - The rev only starts when right-clicking a mob within reach with the chainsaw in the main hand and **no shield in the
-    off hand** (with a shield, right-click keeps blocking). Right-click on a log still strips it; left-click felling and
-    the crouch / Tree Harvester split are unchanged. You walk slowly while revving, like drawing a bow.
-  - Sound: every client plays a seamless engine loop for each player it sees revving (the "using an item" flag is
-    synced vanilla entity data) and the first-person chainsaw shakes; the bites' sparks/blood and the swing sound are
-    sent by the server to everyone nearby. Particles follow the client's particle setting.
+  - Right-click still does what the block does first: a log is stripped (no rev), a chest opens; anything without a
+    right-click use of its own (stone, grass, air) revs. Revving never breaks blocks. With a **shield in the off hand**
+    right-click keeps blocking. Left-click felling and the crouch / Tree Harvester split are unchanged. You walk slowly
+    while revving, like drawing a bow.
+  - Sound: the rev-up and rev-down are sent to everyone nearby (and played at once on your own client); every client
+    plays a seamless engine loop for each player it sees revved up (the "using an item" flag is synced vanilla entity
+    data), fading in as the rev-up tops out, and the first-person chainsaw rises during the wind-up and shakes once
+    revved. Smoke, sparks/blood and the swing per sweep are sent by the server to everyone nearby. Particles follow
+    the client's particle setting.
 
 ## Recipes
 
@@ -54,18 +64,20 @@ Our own clean-room code, art and sound, MIT licensed.
 ```sh
 export JAVA_HOME=~/opt/jdk-17.0.20.1+1     # any JDK 17
 ./gradlew build                            # -> build/libs/localchainsaws-1.20.1-<version>.jar
-./gradlew runGameTestServer                # 17 server-side tests: grow trees, cut them with a fake player, count drops;
-                                           # swing / rev damage, durability floor, rev vs. felling and log stripping
+./gradlew runGameTestServer                # 19 server-side tests: grow trees, cut them with a fake player, count drops;
+                                           # swing / rev damage, wind-up, cone sweep, durability floor, rev vs. felling,
+                                           # log stripping and blocks
 ```
 
 ![The three chainsaws](docs/preview.png)
 
 Art and sound are generated, not drawn by hand in an editor: `tools/make_textures.py [preview.png]` (16x16 sprites,
 8x8 spark/blood particles), `tools/make_sound.py` (synthesized two-stroke engine + chain noise, Ogg Vorbis via ffmpeg:
-the felling roar, the hit burst and the seamless 2 s rev loop), `tools/make_arena.py` (the empty gametest structure).
+the felling roar, the hit burst, the rev-up, the rev-down and the seamless 2 s rev loop), `tools/make_arena.py` (the empty gametest structure).
 
 `-Dlocalchainsaws.clientcheck=true` on a client logs `[localchainsaws-clientcheck]` lines for every chainsaw sound it
-plays, each rev loop it starts (this player / another player) and the spark/blood particles it spawns per second; the
+plays, each rev loop it starts (this player / another player) and when it becomes audible, and the spark/blood
+particles it spawns per second; the
 headless two-client test uses it.
 
 The tests can also run inside a full modpack server: start it with

@@ -42,7 +42,13 @@ public class LocalChainsaws {
     /** A swing that lands: a short rev burst. */
     public static final RegistryObject<SoundEvent> CHAINSAW_HIT = SOUNDS.register("item.chainsaw.hit",
             () -> SoundEvent.createVariableRangeEvent(new ResourceLocation(MODID, "item.chainsaw.hit")));
-    /** Seamless loop played by clients while a player holds right-click with a chainsaw. */
+    /** Right-click pressed: the engine spins up (the wind-up before it saws). */
+    public static final RegistryObject<SoundEvent> CHAINSAW_REV_UP = SOUNDS.register("item.chainsaw.rev_up",
+            () -> SoundEvent.createVariableRangeEvent(new ResourceLocation(MODID, "item.chainsaw.rev_up")));
+    /** Right-click let go after the wind-up: the engine winds down. */
+    public static final RegistryObject<SoundEvent> CHAINSAW_REV_DOWN = SOUNDS.register("item.chainsaw.rev_down",
+            () -> SoundEvent.createVariableRangeEvent(new ResourceLocation(MODID, "item.chainsaw.rev_down")));
+    /** Seamless loop played by clients while a player holds right-click with a revved-up chainsaw. */
     public static final RegistryObject<SoundEvent> CHAINSAW_REV = SOUNDS.register("item.chainsaw.rev",
             () -> SoundEvent.createVariableRangeEvent(new ResourceLocation(MODID, "item.chainsaw.rev")));
 

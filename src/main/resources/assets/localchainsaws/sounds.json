@@ -1,14 +1,32 @@
 {
   "item.chainsaw.cut": {
     "subtitle": "subtitles.localchainsaws.item.chainsaw.cut",
-    "sounds": ["localchainsaws:item/chainsaw_cut"]
+    "sounds": [
+      "localchainsaws:item/chainsaw_cut"
+    ]
   },
   "item.chainsaw.hit": {
     "subtitle": "subtitles.localchainsaws.item.chainsaw.hit",
-    "sounds": ["localchainsaws:item/chainsaw_hit"]
+    "sounds": [
+      "localchainsaws:item/chainsaw_hit"
+    ]
   },
   "item.chainsaw.rev": {
     "subtitle": "subtitles.localchainsaws.item.chainsaw.rev",
-    "sounds": ["localchainsaws:item/chainsaw_rev"]
+    "sounds": [
+      "localchainsaws:item/chainsaw_rev"
+    ]
+  },
+  "item.chainsaw.rev_up": {
+    "subtitle": "subtitles.localchainsaws.item.chainsaw.rev_up",
+    "sounds": [
+      "localchainsaws:item/chainsaw_rev_up"
+    ]
+  },
+  "item.chainsaw.rev_down": {
+    "subtitle": "subtitles.localchainsaws.item.chainsaw.rev_down",
+    "sounds": [
+      "localchainsaws:item/chainsaw_rev_down"
+    ]
   }
 }
