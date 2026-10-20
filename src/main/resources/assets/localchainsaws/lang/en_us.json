@@ -11,5 +11,11 @@
   "subtitles.localchainsaws.item.chainsaw.rev_down": "Chainsaw winds down",
   "death.attack.localchainsaws.chainsaw": "%1$s was shredded by %2$s",
   "death.attack.localchainsaws.chainsaw.item": "%1$s was shredded by %2$s using %3$s",
-  "death.attack.localchainsaws.chainsaw.player": "%1$s was shredded by %2$s"
+  "death.attack.localchainsaws.chainsaw.player": "%1$s was shredded by %2$s",
+  "localchainsaws.wear.low": "Your chainsaw is wearing out: %s uses left. Repair it on an anvil.",
+  "localchainsaws.wear.out": "Your chainsaw is worn out: it won't fell or rev until you repair it on an anvil.",
+  "advancements.localchainsaws.craft_chainsaw.title": "Power Tool",
+  "advancements.localchainsaws.craft_chainsaw.description": "Get your hands on a chainsaw",
+  "advancements.localchainsaws.fell_tree.title": "Timber!",
+  "advancements.localchainsaws.fell_tree.description": "Bring down a whole tree with one cut of a chainsaw"
 }

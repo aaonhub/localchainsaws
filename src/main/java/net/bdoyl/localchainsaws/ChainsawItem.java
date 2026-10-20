@@ -2,6 +2,7 @@ package net.bdoyl.localchainsaws;
 
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.IntSupplier;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -26,15 +27,16 @@ import org.jetbrains.annotations.Nullable;
  * right-click revs the engine up and then saws everything just in front of the player.
  */
 public class ChainsawItem extends AxeItem {
-    private final int maxLogs;
+    private final IntSupplier maxLogs;
 
-    public ChainsawItem(Tier tier, float attackDamage, float attackSpeed, int maxLogs, Properties props) {
+    /** {@code maxLogs}: the most logs one felling takes (from the server config, see {@link ChainsawConfig}). */
+    public ChainsawItem(Tier tier, float attackDamage, float attackSpeed, IntSupplier maxLogs, Properties props) {
         super(tier, attackDamage, attackSpeed, props);
         this.maxLogs = maxLogs;
     }
 
     public int maxLogs() {
-        return maxLogs;
+        return maxLogs.getAsInt();
     }
 
     @Override
@@ -93,7 +95,7 @@ public class ChainsawItem extends AxeItem {
 
     @Override
     public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
-        tooltip.add(Component.translatable("item.localchainsaws.chainsaw.tooltip", maxLogs).withStyle(ChatFormatting.GRAY));
+        tooltip.add(Component.translatable("item.localchainsaws.chainsaw.tooltip", maxLogs()).withStyle(ChatFormatting.GRAY));
         tooltip.add(Component.translatable("item.localchainsaws.chainsaw.tooltip.rev").withStyle(ChatFormatting.GRAY));
     }
 }

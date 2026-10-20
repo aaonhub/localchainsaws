@@ -1,0 +1,18 @@
+{
+  "parent": "minecraft:story/smelt_iron",
+  "display": {
+    "icon": {"item": "localchainsaws:iron_chainsaw"},
+    "title": {"translate": "advancements.localchainsaws.craft_chainsaw.title"},
+    "description": {"translate": "advancements.localchainsaws.craft_chainsaw.description"},
+    "frame": "task",
+    "show_toast": true,
+    "announce_to_chat": true,
+    "hidden": false
+  },
+  "criteria": {
+    "has_chainsaw": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {"items": [{"tag": "localchainsaws:chainsaws"}]}
+    }
+  }
+}

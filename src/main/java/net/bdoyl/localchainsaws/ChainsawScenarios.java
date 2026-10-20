@@ -88,6 +88,14 @@ final class ChainsawScenarios {
         ALL.put("rev_cut_never_breaks_the_saw", new Scenario(ChainsawScenarios::revCutNeverBreaksTheSaw, 100));
         ALL.put("rev_leaves_player_built_logs_alone", new Scenario(ChainsawScenarios::revLeavesPlayerBuiltLogsAlone, 100));
         ALL.put("rev_cut_while_sneaking_leaves_it_to_tree_harvester", new Scenario(ChainsawScenarios::revCutWhileSneakingLeavesItToTreeHarvester, 200));
+        // 1.3.0: wear warnings, advancements, config, netherite edge cases, other mods failing.
+        ALL.put("wear_warns_when_low_and_when_worn_out", new Scenario(ChainsawScenarios::wearWarnsWhenLowAndWhenWornOut, 40));
+        ALL.put("felling_grants_the_timber_advancement", new Scenario(ChainsawScenarios::fellingGrantsTheTimberAdvancement, 100));
+        ALL.put("config_changes_apply_at_once", new Scenario(ChainsawScenarios::configChangesApplyAtOnce, 60));
+        ALL.put("netherite_fortune_silk_touch_fell_normally", new Scenario(ChainsawScenarios::netheriteFortuneSilkTouchFellNormally, 100));
+        ALL.put("smithing_keeps_enchantments_and_wear", new Scenario(ChainsawScenarios::smithingKeepsEnchantmentsAndWear, 40));
+        ALL.put("another_mod_failing_on_a_rev_kill_does_not_crash", new Scenario(ChainsawScenarios::anotherModFailingOnARevKillDoesNotCrash, 60));
+        ALL.put("another_mod_failing_mid_felling_does_not_crash", new Scenario(ChainsawScenarios::anotherModFailingMidFellingDoesNotCrash, 100));
     }
 
     private ChainsawScenarios() {}
@@ -191,7 +199,7 @@ final class ChainsawScenarios {
     }
 
     /**
-     * Pressing right-click starts the engine (rev-up, smoke) but nothing is sawn for the {@link ChainsawCombat#WINDUP}
+     * Pressing right-click starts the engine (rev-up, smoke) but nothing is sawn for the {@link ChainsawConfig#windupTicks}
      * ticks of wind-up; the first bite comes on the tick it is revved up. Letting go winds it down, and pressing again
      * starts a new wind-up.
      */
@@ -202,12 +210,12 @@ final class ChainsawScenarios {
         IronGolem golem = dummy(h, EntityType.IRON_GOLEM, p);
         h.check(p.rev(), "right-click should start the engine");
         h.check(engine(p)[0] == 1, "pressing right-click should rev up (sound + smoke)");
-        p.holdUse(ChainsawCombat.WINDUP);
+        p.holdUse(ChainsawConfig.windupTicks());
         boolean quietDuringWindup = !hurt(golem) && tool.getDamageValue() == 0 && engine(p)[1] == 0;
         p.holdUse(1);
         float bite = golem.getMaxHealth() - golem.getHealth();
         LOG.info("[localchainsaws-test] wind-up: {} ticks without a bite: {}, then bite {} at tick {}, durability {}",
-                ChainsawCombat.WINDUP, quietDuringWindup, bite, p.getTicksUsingItem() - 1, tool.getDamageValue());
+                ChainsawConfig.windupTicks(), quietDuringWindup, bite, p.getTicksUsingItem() - 1, tool.getDamageValue());
         h.check(quietDuringWindup, "nothing should be sawn during the wind-up");
         h.check(bite > 0 && tool.getDamageValue() == 1 && engine(p)[1] == 1, "the first bite should land the tick the saw is revved up");
         p.releaseUsingItem();
@@ -215,7 +223,7 @@ final class ChainsawScenarios {
 
         float health = golem.getHealth();
         h.check(p.rev(), "right-click again should restart the engine");
-        p.holdUse(ChainsawCombat.WINDUP);
+        p.holdUse(ChainsawConfig.windupTicks());
         h.check(golem.getHealth() == health && tool.getDamageValue() == 1, "a new press should wind up again before sawing");
         p.releaseUsingItem();
         h.check(p.rev(), "and again");
@@ -235,7 +243,7 @@ final class ChainsawScenarios {
         Fighter p = fighter(h, "lcs-rev", tool);
         IronGolem golem = dummy(h, EntityType.IRON_GOLEM, p);
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + 1);
+        p.holdUse(ChainsawConfig.windupTicks() + 1);
         float first = golem.getMaxHealth() - golem.getHealth();
         p.holdUse(40);
         float dealt = golem.getMaxHealth() - golem.getHealth() - first;
@@ -282,7 +290,7 @@ final class ChainsawScenarios {
         h.level().addFreshEntity(stand);
 
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + 1);
+        p.holdUse(ChainsawConfig.windupTicks() + 1);
         List<Pig> sawn = List.of(ahead, right, mid);
         boolean allSawn = sawn.stream().allMatch(ChainsawScenarios::hurt) && sawn.stream().allMatch(e -> effects(e)[1] == 1);
         boolean spared = !hurt(behind) && !hurt(side) && !hurt(wide) && !hurt(far) && !hurt(walled) && !hurt(wolf) && stand.isAlive();
@@ -297,16 +305,16 @@ final class ChainsawScenarios {
 
         // Turn to the walled pig: the wall stops the chain; take the wall away and it bites.
         p.face(90, 30.3F); // west, -x, at the walled pig's middle
-        p.holdUse(ChainsawCombat.REV_INTERVAL);
+        p.holdUse(ChainsawConfig.revIntervalTicks());
         h.check(!hurt(walled) && tool.getDamageValue() == 3, "the chain should not saw through a wall");
         for (int y = 0; y < 3; y++) h.setBlock(BASE.offset(-1, y + 1, 0), Blocks.AIR);
-        p.holdUse(ChainsawCombat.REV_INTERVAL);
+        p.holdUse(ChainsawConfig.revIntervalTicks());
         h.check(hurt(walled) && tool.getDamageValue() == 4, "without the wall the pig should be sawn");
         p.releaseUsingItem();
         h.pass();
     }
 
-    /** Five pigs crowded right in front: one sweep saws only {@link ChainsawCombat#MAX_TARGETS} of them (3 durability). */
+    /** Five pigs crowded right in front: one sweep saws only {@link ChainsawConfig#maxTargets} of them (3 durability). */
     static void revSawsAtMostThreeAtOnce(TestArena h) {
         floor(h);
         ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
@@ -315,13 +323,13 @@ final class ChainsawScenarios {
         List<Pig> crowd = new java.util.ArrayList<>();
         for (int i = 0; i < 5; i++) crowd.add(mobAt(h, EntityType.PIG, p, -0.2 + 0.1 * i, 1.6));
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + 1);
+        p.holdUse(ChainsawConfig.windupTicks() + 1);
         long sawn = crowd.stream().filter(ChainsawScenarios::hurt).count();
         LOG.info("[localchainsaws-test] crowd: {} of 5 pigs in reach sawn in one sweep, durability {}", sawn, tool.getDamageValue());
-        h.check(sawn == ChainsawCombat.MAX_TARGETS, "one sweep should saw " + ChainsawCombat.MAX_TARGETS + " of the 5 pigs, sawed " + sawn);
-        h.check(tool.getDamageValue() == ChainsawCombat.MAX_TARGETS, "and cost " + ChainsawCombat.MAX_TARGETS + " durability, cost " + tool.getDamageValue());
-        p.holdUse(ChainsawCombat.REV_INTERVAL);
-        h.check(tool.getDamageValue() == 2 * ChainsawCombat.MAX_TARGETS, "the next sweep saws " + ChainsawCombat.MAX_TARGETS + " again");
+        h.check(sawn == ChainsawConfig.maxTargets(), "one sweep should saw " + ChainsawConfig.maxTargets() + " of the 5 pigs, sawed " + sawn);
+        h.check(tool.getDamageValue() == ChainsawConfig.maxTargets(), "and cost " + ChainsawConfig.maxTargets() + " durability, cost " + tool.getDamageValue());
+        p.holdUse(ChainsawConfig.revIntervalTicks());
+        h.check(tool.getDamageValue() == 2 * ChainsawConfig.maxTargets(), "the next sweep saws " + ChainsawConfig.maxTargets() + " again");
         p.releaseUsingItem();
         h.pass();
     }
@@ -339,7 +347,7 @@ final class ChainsawScenarios {
             pig.setHealth(200);
         }
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + 30);
+        p.holdUse(ChainsawConfig.windupTicks() + 30);
         int left = tool.getMaxDamage() - tool.getDamageValue();
         int bites = pigs.stream().mapToInt(e -> effects(e)[1]).sum(), bloody = pigs.stream().mapToInt(e -> effects(e)[2]).sum();
         long sawn = pigs.stream().filter(ChainsawScenarios::hurt).count();
@@ -364,7 +372,7 @@ final class ChainsawScenarios {
         p.face(0, 0);
         Pig far = mobAt(h, EntityType.PIG, p, 0, 5);
         h.check(p.rev(), "right-click in the air should start the engine");
-        p.holdUse(ChainsawCombat.WINDUP + 20);
+        p.holdUse(ChainsawConfig.windupTicks() + 20);
         h.check(p.isUsingItem() && !hurt(far) && tool.getDamageValue() == 0, "revving at nothing should hurt nothing and cost nothing");
         p.releaseUsingItem();
 
@@ -377,7 +385,7 @@ final class ChainsawScenarios {
         int stripCost = tool.getDamageValue(); // stripping costs 1 durability, like any axe
         InteractionResult onStone = p.rightClickBlock(new BlockHitResult(Vec3.atCenterOf(h.abs(stone)), Direction.EAST, h.abs(stone), false));
         h.check(onStone.consumesAction() && p.isUsingItem(), "right-click on stone should start the engine");
-        p.holdUse(ChainsawCombat.WINDUP + 20);
+        p.holdUse(ChainsawConfig.windupTicks() + 20);
         h.check(h.getBlockState(stone).is(Blocks.STONE) && h.getBlockState(log).is(Blocks.STRIPPED_OAK_LOG), "revving should not break blocks");
         h.check(tool.getDamageValue() == stripCost, "revving at blocks should cost no durability");
         p.releaseUsingItem();
@@ -396,7 +404,7 @@ final class ChainsawScenarios {
         Fighter p = fighter(h, "lcs-rev-fell", tool);
         IronGolem golem = dummy(h, EntityType.IRON_GOLEM, p);
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.REV_INTERVAL + 1);
+        p.holdUse(ChainsawConfig.windupTicks() + ChainsawConfig.revIntervalTicks() + 1);
         p.releaseUsingItem();
         int revCost = tool.getDamageValue();
         golem.discard();
@@ -429,7 +437,7 @@ final class ChainsawScenarios {
 
     /**
      * Revved with the crosshair on an oak's trunk 1.5 blocks away: nothing happens to it during the wind-up and the first
-     * {@link ChainsawCombat#CUT_TICKS} - 1 revved ticks, then the whole tree comes down exactly as from a left-click (all
+     * {@link ChainsawConfig#cutTicks} - 1 revved ticks, then the whole tree comes down exactly as from a left-click (all
      * logs as items, leaves gone, sapling replanted, 1 durability per log), while a pig beside the trunk, inside the
      * cone, is sawn all the while.
      */
@@ -446,7 +454,7 @@ final class ChainsawScenarios {
         InteractionResult onTrunk = p.rightClickBlock(new BlockHitResult(new Vec3(at.getX() + 0.5, at.getY() + 0.6, at.getZ()), Direction.NORTH, at, false));
         h.check(onTrunk.consumesAction() && p.isUsingItem(), "right-click on a tree's trunk should start the rev");
         h.check(h.getBlockState(TRUNK).is(Blocks.OAK_LOG), "right-click on a tree's trunk should not strip it");
-        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS - 1);
+        p.holdUse(ChainsawConfig.windupTicks() + ChainsawConfig.cutTicks() - 1);
         boolean standing = isLog(h, TRUNK);
         p.holdUse(1);
         boolean cut = !isLog(h, TRUNK);
@@ -457,8 +465,8 @@ final class ChainsawScenarios {
             LOG.info("[localchainsaws-test] rev into an oak: still standing 1 tick before the cut {}, cut on time {}, {} logs grown -> {} dropped, "
                     + "{} logs / {} leaves left, stump {}, pig bitten {} times, durability {}", standing, cut, logs, got, countLogs(h), countLeaves(h),
                     h.getBlockState(TRUNK).getBlock(), bites, tool.getDamageValue());
-            h.check(standing, "the log should hold until the chain has been in it for " + ChainsawCombat.CUT_TICKS + " ticks");
-            h.check(cut, "the log should be cut after " + ChainsawCombat.CUT_TICKS + " revved ticks on it");
+            h.check(standing, "the log should hold until the chain has been in it for " + ChainsawConfig.cutTicks() + " ticks");
+            h.check(cut, "the log should be cut after " + ChainsawConfig.cutTicks() + " revved ticks on it");
             h.check(got == logs && countLogs(h) == 0 && countLeaves(h) == 0, "the whole oak should come down as items, dropped " + got + "/" + logs);
             h.check(h.getBlockState(TRUNK).is(BlockTags.SAPLINGS) || dropped(h, Items.OAK_SAPLING) == 0, "a dropped sapling should be replanted");
             h.check(bites == 3 && hurt(pig), "the pig in the cone should be bitten every 5 ticks meanwhile (3 times), was " + bites);
@@ -476,16 +484,16 @@ final class ChainsawScenarios {
         Fighter p = fighter(h, "lcs-rev-aim", tool);
         aimAt(h, p, TRUNK);
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS - 1);
+        p.holdUse(ChainsawConfig.windupTicks() + ChainsawConfig.cutTicks() - 1);
         p.releaseUsingItem();
         h.check(isLog(h, TRUNK), "1 tick short of the cut time the log should stand");
         h.check(p.rev(), "right-click again");
-        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS - 1);
+        p.holdUse(ChainsawConfig.windupTicks() + ChainsawConfig.cutTicks() - 1);
         h.check(isLog(h, TRUNK), "letting go should have started the cut over");
         p.face(90, 0); // a glance to the side for one tick
         p.holdUse(1);
         aimAt(h, p, TRUNK);
-        p.holdUse(ChainsawCombat.CUT_TICKS - 1);
+        p.holdUse(ChainsawConfig.cutTicks() - 1);
         h.check(isLog(h, TRUNK), "looking away should have started the cut over");
         p.holdUse(1);
         h.check(!isLog(h, TRUNK), "after a full uninterrupted cut the log should go");
@@ -507,7 +515,7 @@ final class ChainsawScenarios {
         Fighter p = fighter(h, "lcs-rev-cap", tool);
         aimAt(h, p, TRUNK);
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS);
+        p.holdUse(ChainsawConfig.windupTicks() + ChainsawConfig.cutTicks());
         p.releaseUsingItem();
         h.later(5, () -> {
             int got = dropped(h, Items.JUNGLE_LOG);
@@ -527,7 +535,7 @@ final class ChainsawScenarios {
         Fighter p = fighter(h, "lcs-rev-worn-tree", tool);
         aimAt(h, p, TRUNK);
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS + 20);
+        p.holdUse(ChainsawConfig.windupTicks() + ChainsawConfig.cutTicks() + 20);
         boolean revving = p.isUsingItem();
         p.releaseUsingItem();
         h.later(5, () -> {
@@ -553,7 +561,7 @@ final class ChainsawScenarios {
         Fighter p = fighter(h, "lcs-rev-build", tool);
         aimAt(h, p, TRUNK);
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + 40);
+        p.holdUse(ChainsawConfig.windupTicks() + 40);
         p.releaseUsingItem();
         LOG.info("[localchainsaws-test] rev at a build: {} of 5 logs left, durability {}", countLogs(h), tool.getDamageValue());
         h.check(countLogs(h) == 5 && dropped(h, Items.OAK_LOG) == 0, "revving should not cut into a player-built log column");
@@ -572,7 +580,7 @@ final class ChainsawScenarios {
         p.setPose(net.minecraft.world.entity.Pose.CROUCHING); // a fake player never ticks its pose
         aimAt(h, p, TRUNK);
         h.check(p.rev(), "right-click should start the rev");
-        p.holdUse(ChainsawCombat.WINDUP + ChainsawCombat.CUT_TICKS);
+        p.holdUse(ChainsawConfig.windupTicks() + ChainsawConfig.cutTicks());
         p.releaseUsingItem();
         boolean th = ModList.get().isLoaded("treeharvester");
         h.later(100, () -> {
@@ -813,6 +821,203 @@ final class ChainsawScenarios {
                 LOG.info("[localchainsaws-test] replant: sapling kept during the grace period, breakable after");
                 h.pass();
             });
+        });
+    }
+
+    // ---- 1.3.0 ----
+
+    /**
+     * The chainsaw in hand dropping to the low mark (10% by default) warns once; further wear stays quiet until the last
+     * point, which warns again ("worn out"). Switching to an already worn chainsaw, or repairing one, is quiet.
+     */
+    static void wearWarnsWhenLowAndWhenWornOut(TestArena h) {
+        ChainsawWear.record = true;
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-wear", tool);
+        int mark = ChainsawWear.lowMark(tool);
+        h.check(mark == (int) Math.ceil(tool.getMaxDamage() * ChainsawConfig.lowDurabilityPercent() / 100.0), "low mark " + mark);
+        tool.setDamageValue(tool.getMaxDamage() - mark - 1);
+        ChainsawWear.check(p);
+        int[] w = ChainsawWear.WARNINGS.computeIfAbsent(p.getId(), id -> new int[2]);
+        h.check(w[0] == 0 && w[1] == 0, "a chainsaw above the mark should not warn");
+        tool.setDamageValue(tool.getDamageValue() + 1);
+        ChainsawWear.check(p);
+        h.check(w[0] == 1, "dropping to the low mark (" + mark + " left) should warn once, warned " + w[0]);
+        tool.setDamageValue(tool.getDamageValue() + 3);
+        ChainsawWear.check(p);
+        h.check(w[0] == 1, "more wear below the mark should stay quiet");
+        tool.setDamageValue(tool.getMaxDamage() - 1);
+        ChainsawWear.check(p);
+        h.check(w[1] == 1, "the last point should warn 'worn out', warned " + w[1]);
+        ItemStack worn = new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get());
+        worn.setDamageValue(worn.getMaxDamage() - 2);
+        p.setItemInHand(InteractionHand.MAIN_HAND, worn);
+        ChainsawWear.check(p);
+        worn.setDamageValue(worn.getMaxDamage() - 5); // repaired a bit
+        ChainsawWear.check(p);
+        h.check(w[0] == 1 && w[1] == 1, "switching to a worn chainsaw or repairing it should be quiet");
+        LOG.info("[localchainsaws-test] wear: mark {} of {}, warnings low={} worn-out={}", mark, tool.getMaxDamage(), w[0], w[1]);
+        h.pass();
+    }
+
+    /** A felled tree grants "Timber!" (to real players; fake players, i.e. other mods' machines, are skipped). */
+    static void fellingGrantsTheTimberAdvancement(TestArena h) {
+        TreeFeller.recordAwards = true;
+        var advancements = h.level().getServer().getAdvancements();
+        for (String id : List.of("craft_chainsaw", "fell_tree")) {
+            h.check(advancements.getAdvancement(new net.minecraft.resources.ResourceLocation(LocalChainsaws.MODID, id)) != null,
+                    "advancement localchainsaws:" + id + " is missing");
+        }
+        floor(h);
+        grow(h, TreeFeatures.OAK, BASE, 21);
+        int before = TreeFeller.AWARDS.getOrDefault("fell_tree", 0);
+        FakePlayer p = player(h, "lcs-timber", new ItemStack(LocalChainsaws.IRON_CHAINSAW.get()), false);
+        cut(h, p, BASE);
+        h.check(TreeFeller.AWARDS.getOrDefault("fell_tree", 0) == before + 1, "felling should try to grant fell_tree once");
+        h.check(!TreeFeller.award(p, "fell_tree", "felled"), "a fake player must not get advancements");
+        h.pass();
+    }
+
+    /** Server config values take effect on the next use: maxTargets 1 saws one of five crowded pigs, then back to the default. */
+    static void configChangesApplyAtOnce(TestArena h) {
+        h.check(ChainsawConfig.SERVER_SPEC.isLoaded(), "the server config should be loaded");
+        h.check(ChainsawConfig.maxTargets() == ChainsawConfig.MAX_TARGETS && ChainsawConfig.reach() == ChainsawConfig.REACH,
+                "expected the default maxTargets/reach, have " + ChainsawConfig.maxTargets() + "/" + ChainsawConfig.reach());
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-config", tool);
+        p.face(0, PITCH_AT_PIG);
+        List<Pig> crowd = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) crowd.add(mobAt(h, EntityType.PIG, p, -0.2 + 0.1 * i, 1.6));
+        long sawn;
+        // Set and restored within this one call, so scenarios running at the same time never see the changed value.
+        ChainsawConfig.setMaxTargets(1);
+        try {
+            h.check(p.rev(), "right-click should start the rev");
+            p.holdUse(ChainsawConfig.windupTicks() + 1);
+            sawn = crowd.stream().filter(ChainsawScenarios::hurt).count();
+            p.releaseUsingItem();
+        } finally {
+            ChainsawConfig.setMaxTargets(ChainsawConfig.MAX_TARGETS);
+        }
+        LOG.info("[localchainsaws-test] config: maxTargets 1 -> {} of 5 pigs sawn, back to {}", sawn, ChainsawConfig.maxTargets());
+        h.check(sawn == 1, "with maxTargets = 1 one sweep should saw 1 pig, sawed " + sawn);
+        h.check(ChainsawConfig.maxTargets() == ChainsawConfig.MAX_TARGETS, "maxTargets should be back to the default");
+        h.pass();
+    }
+
+    /**
+     * Fortune and Silk Touch don't change what a felling drops from logs (vanilla logs ignore both): one log item per
+     * log, leaves drop their decay loot, and the enchantments stay on the netherite chainsaw.
+     */
+    static void netheriteFortuneSilkTouchFellNormally(TestArena h) {
+        floor(h);
+        grow(h, TreeFeatures.OAK, BASE, 22);
+        grow(h, TreeFeatures.BIRCH, BASE.offset(-6, 0, -6), 23);
+        int oak = countBlocks(h, st -> st.is(Blocks.OAK_LOG)), birch = countBlocks(h, st -> st.is(Blocks.BIRCH_LOG));
+        ItemStack fortune = new ItemStack(LocalChainsaws.NETHERITE_CHAINSAW.get());
+        fortune.enchant(net.minecraft.world.item.enchantment.Enchantments.BLOCK_FORTUNE, 3);
+        ItemStack silk = new ItemStack(LocalChainsaws.NETHERITE_CHAINSAW.get());
+        silk.enchant(net.minecraft.world.item.enchantment.Enchantments.SILK_TOUCH, 1);
+        cut(h, player(h, "lcs-fortune", fortune, false), BASE);
+        cut(h, player(h, "lcs-silk", silk, false), BASE.offset(-6, 0, -6));
+        h.later(5, () -> {
+            int gotOak = dropped(h, Items.OAK_LOG), gotBirch = dropped(h, Items.BIRCH_LOG);
+            int leafBlocks = dropped(h, Items.OAK_LEAVES) + dropped(h, Items.BIRCH_LEAVES);
+            LOG.info("[localchainsaws-test] fortune III: {}/{} oak logs, silk touch: {}/{} birch logs, {} leaf blocks dropped, damage {} / {}",
+                    gotOak, oak, gotBirch, birch, leafBlocks, fortune.getDamageValue(), silk.getDamageValue());
+            h.check(gotOak == oak, "Fortune III should drop exactly one item per log: " + gotOak + "/" + oak);
+            h.check(gotBirch == birch, "Silk Touch should drop exactly one item per log: " + gotBirch + "/" + birch);
+            h.check(leafBlocks == 0, "leaves should drop decay loot, not themselves (" + leafBlocks + " leaf blocks)");
+            h.check(fortune.getDamageValue() == oak && silk.getDamageValue() == birch, "1 durability per log");
+            h.check(fortune.getEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.BLOCK_FORTUNE) == 3
+                    && silk.getEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.SILK_TOUCH) == 1, "enchantments kept");
+            h.pass();
+        });
+    }
+
+    /** Upgrading at a smithing table keeps the diamond chainsaw's enchantments, name and wear (like vanilla tools). */
+    static void smithingKeepsEnchantmentsAndWear(TestArena h) {
+        ServerLevel level = h.level();
+        ItemStack diamond = new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get());
+        diamond.enchant(net.minecraft.world.item.enchantment.Enchantments.BLOCK_EFFICIENCY, 5);
+        diamond.enchant(net.minecraft.world.item.enchantment.Enchantments.UNBREAKING, 3);
+        diamond.setHoverName(net.minecraft.network.chat.Component.literal("Old Faithful"));
+        diamond.setDamageValue(100);
+        net.minecraft.world.SimpleContainer table = new net.minecraft.world.SimpleContainer(
+                new ItemStack(Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE), diamond, new ItemStack(Items.NETHERITE_INGOT));
+        var recipe = level.getRecipeManager().getRecipeFor(net.minecraft.world.item.crafting.RecipeType.SMITHING, table, level);
+        h.check(recipe.isPresent(), "no smithing recipe for template + diamond chainsaw + netherite ingot");
+        ItemStack out = recipe.get().assemble(table, level.registryAccess());
+        LOG.info("[localchainsaws-test] smithing: {} -> {} (damage {}, enchantments {})", diamond, out, out.getDamageValue(), out.getEnchantmentTags());
+        h.check(out.is(LocalChainsaws.NETHERITE_CHAINSAW.get()), "the result should be a netherite chainsaw, is " + out);
+        h.check(out.getEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.BLOCK_EFFICIENCY) == 5
+                && out.getEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.UNBREAKING) == 3, "enchantments lost");
+        h.check(out.getHoverName().getString().equals("Old Faithful"), "name lost");
+        h.check(out.getDamageValue() == 100, "wear should carry over (100), has " + out.getDamageValue());
+        h.pass();
+    }
+
+    /** Entities whose death makes the test listener throw, standing in for another mod's bug (2026-10-20 crash). */
+    static final String THROW_ON_DEATH = "localchainsaws_test_throw_on_death";
+    /** Logs whose break event makes the test listener throw. */
+    static final java.util.Set<BlockPos> THROW_ON_BREAK = new java.util.HashSet<>();
+    private static boolean failingListeners;
+
+    private static void addFailingListeners() {
+        if (failingListeners) return;
+        failingListeners = true;
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener((net.minecraftforge.event.entity.living.LivingDeathEvent e) -> {
+            if (e.getEntity().getTags().contains(THROW_ON_DEATH)) throw new IllegalStateException("test: another mod failing on a death");
+        });
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener((net.minecraftforge.event.level.BlockEvent.BreakEvent e) -> {
+            if (THROW_ON_BREAK.contains(e.getPos())) throw new IllegalStateException("test: another mod failing on a block break");
+        });
+    }
+
+    /** Another mod throwing while reacting to a rev kill stops the rev and is logged; the server keeps running. */
+    static void anotherModFailingOnARevKillDoesNotCrash(TestArena h) {
+        addFailingListeners();
+        floor(h);
+        ItemStack tool = new ItemStack(LocalChainsaws.IRON_CHAINSAW.get());
+        Fighter p = fighter(h, "lcs-failing-kill", tool);
+        Pig pig = dummy(h, EntityType.PIG, p);
+        pig.setHealth(1.0F);
+        pig.addTag(THROW_ON_DEATH);
+        int before = Guard.failures("rev");
+        h.check(p.rev(), "right-click should start the rev");
+        p.holdUse(ChainsawConfig.windupTicks() + 1); // first bite kills it, the listener throws inside hurt()
+        LOG.info("[localchainsaws-test] failing mod on a rev kill: guard caught {}, still revving {}, pig health {}",
+                Guard.failures("rev") - before, p.isUsingItem(), pig.getHealth());
+        h.check(Guard.failures("rev") == before + 1, "the failure should be caught once, caught " + (Guard.failures("rev") - before));
+        h.check(!p.isUsingItem(), "the rev should stop after a failure");
+        h.check(pig.getHealth() <= 0, "the pig should still have died");
+        h.pass();
+    }
+
+    /** Another mod throwing on one of our per-log breaks ends the felling there; the cut log still breaks, no crash. */
+    static void anotherModFailingMidFellingDoesNotCrash(TestArena h) {
+        addFailingListeners();
+        floor(h);
+        grow(h, TreeFeatures.OAK, BASE, 24);
+        int logs = countLogs(h);
+        BlockPos bomb = h.abs(BASE.above(2));
+        THROW_ON_BREAK.add(bomb);
+        int before = Guard.failures("felling");
+        boolean broke;
+        try {
+            broke = tryCut(h, player(h, "lcs-failing-felling", new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get()), false), BASE);
+        } finally {
+            THROW_ON_BREAK.remove(bomb);
+        }
+        int caught = Guard.failures("felling") - before;
+        h.later(5, () -> {
+            int got = dropped(h, Items.OAK_LOG);
+            LOG.info("[localchainsaws-test] failing mod mid-felling: guard caught {}, cut log broke {}, {} of {} logs dropped", caught, broke, got, logs);
+            h.check(caught == 1, "the failure should be caught once, caught " + caught);
+            h.check(broke && h.getBlockState(BASE).isAir() || h.getBlockState(BASE).is(BlockTags.SAPLINGS), "the cut log should still break");
+            h.check(got >= 1 && got < logs, "the felling should stop at the failing log, dropped " + got + "/" + logs);
+            h.pass();
         });
     }
 }

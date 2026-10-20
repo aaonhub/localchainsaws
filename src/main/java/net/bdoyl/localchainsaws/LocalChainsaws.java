@@ -29,13 +29,13 @@ public class LocalChainsaws {
     public static final DeferredRegister<SoundEvent> SOUNDS = DeferredRegister.create(Registries.SOUND_EVENT, MODID);
     public static final DeferredRegister<ParticleType<?>> PARTICLES = DeferredRegister.create(Registries.PARTICLE_TYPE, MODID);
 
-    // Same damage/speed as the vanilla axe of each tier; maxLogs caps one felling.
+    // Same damage/speed as the vanilla axe of each tier; maxLogs caps one felling (server config, 64/128/256 by default).
     public static final RegistryObject<ChainsawItem> IRON_CHAINSAW = ITEMS.register("iron_chainsaw",
-            () -> new ChainsawItem(Tiers.IRON, 6.0F, -3.1F, 64, new Item.Properties()));
+            () -> new ChainsawItem(Tiers.IRON, 6.0F, -3.1F, ChainsawConfig::ironMaxLogs, new Item.Properties()));
     public static final RegistryObject<ChainsawItem> DIAMOND_CHAINSAW = ITEMS.register("diamond_chainsaw",
-            () -> new ChainsawItem(Tiers.DIAMOND, 5.0F, -3.0F, 128, new Item.Properties()));
+            () -> new ChainsawItem(Tiers.DIAMOND, 5.0F, -3.0F, ChainsawConfig::diamondMaxLogs, new Item.Properties()));
     public static final RegistryObject<ChainsawItem> NETHERITE_CHAINSAW = ITEMS.register("netherite_chainsaw",
-            () -> new ChainsawItem(Tiers.NETHERITE, 5.0F, -3.0F, 256, new Item.Properties().fireResistant()));
+            () -> new ChainsawItem(Tiers.NETHERITE, 5.0F, -3.0F, ChainsawConfig::netheriteMaxLogs, new Item.Properties().fireResistant()));
 
     public static final RegistryObject<SoundEvent> CHAINSAW_CUT = SOUNDS.register("item.chainsaw.cut",
             () -> SoundEvent.createVariableRangeEvent(new ResourceLocation(MODID, "item.chainsaw.cut")));
@@ -60,9 +60,11 @@ public class LocalChainsaws {
         ITEMS.register(modBus);
         SOUNDS.register(modBus);
         PARTICLES.register(modBus);
+        ChainsawConfig.register(modBus);
         modBus.addListener(this::addToTabs);
         MinecraftForge.EVENT_BUS.register(TreeFeller.class);
         MinecraftForge.EVENT_BUS.register(ChainsawCombat.class);
+        MinecraftForge.EVENT_BUS.register(ChainsawWear.class);
         DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> ChainsawClient.init(modBus));
         // Self-test for throwaway copies of a modpack server: see SelfTest. Never set on the live server.
         if (Boolean.getBoolean("localchainsaws.selftest")) MinecraftForge.EVENT_BUS.register(SelfTest.class);

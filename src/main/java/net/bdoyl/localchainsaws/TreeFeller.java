@@ -7,8 +7,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import net.minecraft.advancements.Advancement;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.GlobalPos;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
@@ -24,6 +27,7 @@ import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
@@ -54,7 +58,7 @@ public final class TreeFeller {
     private static final List<Runnable> NEXT_TICK = new ArrayList<>();
     /** Ticks a replanted sapling can't be broken with a chainsaw: players are often still holding the button when it appears. */
     static final int SAPLING_GRACE_TICKS = 60;
-    private static final Map<BlockPos, Long> REPLANTED = new HashMap<>(); // sapling pos -> server tick the grace ends
+    private static final Map<GlobalPos, Long> REPLANTED = new HashMap<>(); // sapling (dimension + pos) -> server tick the grace ends
 
     private TreeFeller() {}
 
@@ -74,8 +78,9 @@ public final class TreeFeller {
         if (tree.size() < 2 || !hasNaturalLeaves(level, tree)) return; // a lone log or something player-built: just the one block
         felling = true;
         try {
-            // Nearest first, so a tree bigger than the cap is cut from the bottom up and the rest stays standing.
-            fell(level, player, tool, origin, tree.subList(0, Math.min(tree.size(), saw.maxLogs())));
+            // Nearest first, so a tree bigger than the cap is cut from the bottom up and the rest stays standing. Another
+            // mod failing on one of our per-log breaks must not take the server down: then only the cut log breaks.
+            Guard.run("felling", () -> fell(level, player, tool, origin, tree.subList(0, Math.min(tree.size(), saw.maxLogs()))));
         } finally {
             felling = false;
         }
@@ -95,7 +100,7 @@ public final class TreeFeller {
     @SubscribeEvent
     public static void protectReplanted(BlockEvent.BreakEvent event) {
         if (REPLANTED.isEmpty() || !(event.getLevel() instanceof ServerLevel level)) return;
-        Long until = REPLANTED.get(event.getPos());
+        Long until = REPLANTED.get(GlobalPos.of(level.dimension(), event.getPos()));
         if (until != null && level.getServer().getTickCount() < until && event.getState().is(BlockTags.SAPLINGS)
                 && event.getPlayer().getMainHandItem().getItem() instanceof ChainsawItem) {
             event.setCanceled(true);
@@ -163,7 +168,11 @@ public final class TreeFeller {
             // Keep 1 durability for the cut log and 1 more so the chainsaw never breaks mid-tree.
             if (tool.isDamageableItem() && tool.getMaxDamage() - tool.getDamageValue() <= 2) break;
             BlockState st = level.getBlockState(pos);
-            if (MinecraftForge.EVENT_BUS.post(new BlockEvent.BreakEvent(level, pos, st, player))) continue; // claims/protection said no
+            // Claims/protection mods can say no. If another mod fails on this break, stop cutting here but still drop
+            // what was cut so far (below), instead of losing it or crashing.
+            boolean[] refused = {false};
+            if (!Guard.run("felling", () -> refused[0] = MinecraftForge.EVENT_BUS.post(new BlockEvent.BreakEvent(level, pos, st, player)))) break;
+            if (refused[0]) continue;
             BlockEntity be = level.getBlockEntity(pos);
             drops.addAll(Block.getDrops(st, level, pos, be, player, tool));
             level.removeBlock(pos, false);
@@ -189,7 +198,20 @@ public final class TreeFeller {
         for (ItemStack stack : merged) Block.popResource(level, origin, stack);
         level.playSound(null, origin, LocalChainsaws.CHAINSAW_CUT.get(), SoundSource.PLAYERS, 1.0F,
                 0.9F + level.random.nextFloat() * 0.2F);
+        if (felled.size() >= 2) award(player, "fell_tree", "felled");
     }
+
+    /** Grant one of our advancements (not to fake players: machines of other mods holding a chainsaw). */
+    static boolean award(ServerPlayer player, String advancement, String criterion) {
+        if (recordAwards) AWARDS.merge(advancement, 1, Integer::sum);
+        if (player instanceof FakePlayer) return false;
+        Advancement adv = player.server.getAdvancements().getAdvancement(new ResourceLocation(LocalChainsaws.MODID, advancement));
+        return adv != null && player.getAdvancements().award(adv, criterion);
+    }
+
+    /** Advancements fell() tried to grant, only kept while the test scenarios run. */
+    static boolean recordAwards;
+    static final Map<String, Integer> AWARDS = new HashMap<>();
 
     /**
      * Natural leaves within reach of the felled logs that no remaining log keeps alive any more (vanilla's distance rule:
@@ -286,7 +308,7 @@ public final class TreeFeller {
                 for (BlockPos pos : plant) {
                     if (level.getBlockState(pos).isAir() && sapling.canSurvive(level, pos)) {
                         level.setBlock(pos, sapling, Block.UPDATE_ALL);
-                        REPLANTED.put(pos.immutable(), (long) level.getServer().getTickCount() + SAPLING_GRACE_TICKS);
+                        REPLANTED.put(GlobalPos.of(level.dimension(), pos.immutable()), (long) level.getServer().getTickCount() + SAPLING_GRACE_TICKS);
                     } else {
                         Block.popResource(level, origin, new ItemStack(item));
                     }

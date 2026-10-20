@@ -48,35 +48,20 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 /**
  * The chainsaw as a weapon. A normal swing is a vanilla axe hit plus a rev sound and sparks/blood at the impact. Holding
- * right-click anywhere starts the engine: a rev-up and a puff of smoke, {@link #WINDUP} ticks of wind-up, then every
- * {@link #REV_INTERVAL} ticks the chain saws up to {@link #MAX_TARGETS} living things in a narrow {@link #CONE_DEGREES}
- * cone in front of the player within {@link #REACH}. Each one takes slightly more
- * than axe DPS ({@link #REV_DPS_FACTOR}) and costs 1 durability, never below 1 durability. Meanwhile a log of a natural
- * tree under the crosshair within the same reach is sawn into: after {@link #CUT_TICKS} ticks on it, it is broken
+ * right-click anywhere starts the engine: a rev-up and a puff of smoke, a wind-up, then every
+ * few ticks the chain saws up to a few living things in a narrow cone in front of the player within reach (numbers in
+ * {@link ChainsawConfig}). Each one takes slightly more
+ * than axe DPS and costs 1 durability, never below 1 durability. Meanwhile a log of a natural
+ * tree under the crosshair within the same reach is sawn into: after a short cut time on it, it is broken
  * exactly as a left-click would break it, so the tree fells as usual (see TreeFeller). Letting go winds it down. All server side; the sound and particles are broadcast to
  * everyone nearby, and the rev loop is played by each client for every player it sees revved up (the "using an item"
  * flag is synced vanilla entity data), see ChainsawClient.
  */
 public final class ChainsawCombat {
-    // ---- Rev attack tuning: everything about how strong holding right-click is lives here. ----
+    // ---- Rev attack tuning: the numbers (reach, cone, targets, wind-up, interval, damage, cut time) are in
+    // ChainsawConfig, i.e. the server's serverconfig/localchainsaws-server.toml, so they change without a release.
     // Kept narrow and capped on purpose (Guy 2026-10-19: "to make it not too op let's limit the range"); reach back to a
     // normal hit's 3 blocks at his request the same evening.
-
-    /** Ticks of wind-up after right-click is pressed before the chain saws anything. */
-    static final int WINDUP = 12;
-    /** Ticks between two sweeps once revved up (4 a second). */
-    static final int REV_INTERVAL = 5;
-    /** Rev damage per second compared to perfectly timed axe swings (damage x attack speed), for each thing sawn. */
-    static final float REV_DPS_FACTOR = 1.1F;
-    /** How far the chain reaches (mobs and tree trunks), in blocks from the eyes to the nearest point of a hitbox, like a normal hit. */
-    static final double REACH = 3.0;
-    /** Width of the area sawn: hitboxes within this many degrees (in total, so half to each side) of where the player looks. */
-    static final double CONE_DEGREES = 45.0;
-    /** Most things sawn per sweep: the one under the crosshair first, then the nearest. */
-    static final int MAX_TARGETS = 3;
-    /** Ticks of revved, continuous aim at a log of a natural tree before it is cut through and the tree comes down. */
-    static final int CUT_TICKS = 15;
-    private static final double CONE_COS = Math.cos(Math.toRadians(CONE_DEGREES / 2));
 
     static final ResourceKey<DamageType> CHAINSAW_DAMAGE =
             ResourceKey.create(Registries.DAMAGE_TYPE, new ResourceLocation(LocalChainsaws.MODID, "chainsaw"));
@@ -132,8 +117,12 @@ public final class ChainsawCombat {
 
     /** Right-click let go (or the rev stopped): the engine winds down, unless it was only a tap. */
     static void revDown(ServerPlayer player, int ticksUsed) {
+        Guard.run("rev-down", () -> revDownUnguarded(player, ticksUsed));
+    }
+
+    private static void revDownUnguarded(ServerPlayer player, int ticksUsed) {
         stopCut(player);
-        if (ticksUsed < WINDUP / 2) return;
+        if (ticksUsed < ChainsawConfig.windupTicks() / 2) return;
         ServerLevel level = player.serverLevel();
         level.playSound(null, player.getX(), player.getY(), player.getZ(), LocalChainsaws.CHAINSAW_REV_DOWN.get(),
                 SoundSource.PLAYERS, 0.9F, 1.0F);
@@ -141,13 +130,22 @@ public final class ChainsawCombat {
         if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[4])[2]++;
     }
 
-    /** Called every tick the player holds right-click with a chainsaw (server side). */
+    /**
+     * Called every tick the player holds right-click with a chainsaw (server side). A rev bite can kill a mob, and other
+     * mods react to that (conversions, drops, backpacks...): if one of them throws, the rev stops and the error is logged
+     * instead of crashing the server (2026-10-20: Hordes + Sophisticated Backpacks did that on a zombie's kill).
+     */
     static void revTick(ServerPlayer player, ItemStack stack, int ticksUsed) {
-        if (ticksUsed == WINDUP) {
+        if (!Guard.run("rev", () -> revTickUnguarded(player, stack, ticksUsed))) player.stopUsingItem();
+    }
+
+    private static void revTickUnguarded(ServerPlayer player, ItemStack stack, int ticksUsed) {
+        int windup = ChainsawConfig.windupTicks();
+        if (ticksUsed == windup) {
             puff(player.serverLevel(), player, 8, 0.04); // revved up: the exhaust coughs
             if (recordEffects) ENGINE.computeIfAbsent(player.getId(), id -> new int[4])[1]++;
         }
-        if (ticksUsed < WINDUP) return;
+        if (ticksUsed < windup) return;
         if (!hasFuel(stack)) {
             player.stopUsingItem();
             return;
@@ -157,7 +155,7 @@ public final class ChainsawCombat {
             player.stopUsingItem();
             return;
         }
-        if ((ticksUsed - WINDUP) % REV_INTERVAL != 0) return;
+        if ((ticksUsed - windup) % ChainsawConfig.revIntervalTicks() != 0) return;
         LivingEntity last = null;
         for (LivingEntity target : targetsInReach(player)) {
             if (bite(player, stack, target)) last = target;
@@ -173,8 +171,8 @@ public final class ChainsawCombat {
     }
 
     /**
-     * Revved up with a log of a natural tree under the crosshair within {@link #REACH}: saw into it (cracks and sawdust
-     * everyone sees), and after {@link #CUT_TICKS} ticks on the same log break it the way a left-click does: mining starts
+     * Revved up with a log of a natural tree under the crosshair within reach: saw into it (cracks and sawdust
+     * everyone sees), and after {@link ChainsawConfig#cutTicks} ticks on the same log break it the way a left-click does: mining starts
      * (Tree Harvester's cue when crouching), then the player breaks the block, so felling, caps, drops, replanting,
      * durability and claims all work exactly as for a left-click. Looking away or letting go starts the cut over.
      * Logs of something player-built are left alone: right-click never breaks a build.
@@ -182,12 +180,13 @@ public final class ChainsawCombat {
     private static void sawLog(ServerPlayer player) {
         ServerLevel level = player.serverLevel();
         Vec3 eye = player.getEyePosition();
-        BlockHitResult hit = level.clip(new ClipContext(eye, eye.add(player.getViewVector(1.0F).scale(REACH)),
+        double reach = ChainsawConfig.reach();
+        BlockHitResult hit = level.clip(new ClipContext(eye, eye.add(player.getViewVector(1.0F).scale(reach)),
                 ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
         BlockPos pos = hit.getBlockPos();
         BlockState state = level.getBlockState(pos);
         if (hit.getType() != HitResult.Type.BLOCK || !state.is(BlockTags.LOGS) || !level.mayInteract(player, pos)
-                || targetInReach(player, REACH) != null) { // a mob in front of the log takes the chain instead
+                || targetInReach(player, reach) != null) { // a mob in front of the log takes the chain instead
             stopCut(player);
             return;
         }
@@ -201,9 +200,10 @@ public final class ChainsawCombat {
         cut.ticks++;
         Vec3 at = hit.getLocation();
         if (cut.ticks % 2 == 1) level.sendParticles(new BlockParticleOption(ParticleTypes.BLOCK, state), at.x, at.y, at.z, 4, 0.05, 0.05, 0.05, 0.15);
-        if (cut.ticks % REV_INTERVAL == 1) player.swing(InteractionHand.MAIN_HAND, true); // others see it bite into the wood
-        if (cut.ticks < CUT_TICKS) {
-            level.destroyBlockProgress(crackId(player), pos, cut.ticks * 10 / CUT_TICKS);
+        if (cut.ticks % ChainsawConfig.revIntervalTicks() == 1) player.swing(InteractionHand.MAIN_HAND, true); // others see it bite into the wood
+        int cutTicks = ChainsawConfig.cutTicks();
+        if (cut.ticks < cutTicks) {
+            level.destroyBlockProgress(crackId(player), pos, cut.ticks * 10 / cutTicks);
             return;
         }
         stopCut(player);
@@ -255,17 +255,18 @@ public final class ChainsawCombat {
     static float revDamage(Player player, ItemStack stack, LivingEntity target) {
         double perSwing = player.getAttributeValue(Attributes.ATTACK_DAMAGE) + EnchantmentHelper.getDamageBonus(stack, target.getMobType());
         double swingsPerSecond = player.getAttributeValue(Attributes.ATTACK_SPEED);
-        return (float) (perSwing * swingsPerSecond * REV_DPS_FACTOR * REV_INTERVAL / 20.0);
+        return (float) (perSwing * swingsPerSecond * ChainsawConfig.revDpsFactor() * ChainsawConfig.revIntervalTicks() / 20.0);
     }
 
     /**
-     * What one sweep saws, at most {@link #MAX_TARGETS}: the mob under the crosshair first, then the nearest living
-     * things whose box comes within {@link #REACH} inside the cone in front of the player, not behind a block. Never the
+     * What one sweep saws, at most {@link ChainsawConfig#maxTargets}: the mob under the crosshair first, then the nearest
+     * living things whose box comes within {@link ChainsawConfig#reach} inside the cone in front of the player, not behind a block. Never the
      * player, what they ride or who rides with them, teammates, their own pets, or armor stands; someone else's pet only
      * when aimed at.
      */
     static List<LivingEntity> targetsInReach(Player player) {
-        double reach = REACH;
+        double reach = ChainsawConfig.reach();
+        double coneCos = Math.cos(Math.toRadians(ChainsawConfig.coneDegrees() / 2));
         Vec3 eye = player.getEyePosition();
         Vec3 look = player.getViewVector(1.0F);
         LivingEntity aimed = targetInReach(player, reach);
@@ -273,10 +274,11 @@ public final class ChainsawCombat {
         for (LivingEntity e : player.level().getEntitiesOfClass(LivingEntity.class, player.getBoundingBox().inflate(reach + 1.0),
                 e -> e != player && e.isAlive() && !e.isSpectator() && e.isPickable())) {
             if (!maySaw(player, e, e == aimed)) continue;
-            if (e == aimed || inCone(player, eye, look, reach, e.getBoundingBox())) found.add(e);
+            if (e == aimed || inCone(player, eye, look, reach, coneCos, e.getBoundingBox())) found.add(e);
         }
         found.sort(Comparator.<LivingEntity, Boolean>comparing(e -> e != aimed).thenComparingDouble(e -> e.getBoundingBox().distanceToSqr(eye)));
-        return found.size() > MAX_TARGETS ? found.subList(0, MAX_TARGETS) : found;
+        int max = ChainsawConfig.maxTargets();
+        return found.size() > max ? found.subList(0, max) : found;
     }
 
     private static boolean maySaw(Player player, LivingEntity e, boolean aimed) {
@@ -289,7 +291,7 @@ public final class ChainsawCombat {
      * The nearest point of the box is within reach (like a normal hit), the line of sight goes through the box or the
      * part of it nearest the line of sight is inside the cone, and it isn't behind a block.
      */
-    private static boolean inCone(Player player, Vec3 eye, Vec3 look, double reach, AABB box) {
+    private static boolean inCone(Player player, Vec3 eye, Vec3 look, double reach, double coneCos, AABB box) {
         if (box.contains(eye)) return true;
         Vec3 closest = new Vec3(Mth.clamp(eye.x, box.minX, box.maxX), Mth.clamp(eye.y, box.minY, box.maxY), Mth.clamp(eye.z, box.minZ, box.maxZ));
         if (closest.distanceToSqr(eye) > reach * reach) return false;
@@ -300,7 +302,7 @@ public final class ChainsawCombat {
             near = new Vec3(Mth.clamp(onSight.x, box.minX, box.maxX), Mth.clamp(onSight.y, box.minY, box.maxY),
                     Mth.clamp(onSight.z, box.minZ, box.maxZ));
             Vec3 to = near.subtract(eye);
-            if (to.dot(look) < to.length() * CONE_COS) return false;
+            if (to.dot(look) < to.length() * coneCos) return false;
         }
         return clear(player, eye, near) || clear(player, eye, center);
     }

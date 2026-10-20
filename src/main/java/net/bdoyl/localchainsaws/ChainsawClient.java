@@ -13,6 +13,11 @@ import net.minecraft.client.particle.SpriteSet;
 import net.minecraft.client.particle.TextureSheetParticle;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.resources.sounds.AbstractTickableSoundInstance;
+import net.minecraft.client.resources.sounds.Sound;
+import net.minecraft.client.resources.sounds.SoundInstance;
+import net.minecraft.client.sounds.SoundManager;
+import net.minecraft.client.sounds.WeighedSoundEvents;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
@@ -49,7 +54,7 @@ public final class ChainsawClient {
     public static void init(IEventBus modBus) {
         modBus.addListener(ChainsawClient::registerParticles);
         MinecraftForge.EVENT_BUS.addListener(ChainsawClient::onClientTick);
-        if (CHECK) MinecraftForge.EVENT_BUS.addListener(ChainsawClient::onPlaySound);
+        MinecraftForge.EVENT_BUS.addListener(ChainsawClient::onPlaySound);
     }
 
     static boolean isRevving(LivingEntity entity) {
@@ -85,16 +90,45 @@ public final class ChainsawClient {
         }
     }
 
+    /** Our one-shot sounds (rev-up/down, hits, felling) at this computer's soundVolume (client config); the rev loop has its own. */
     private static void onPlaySound(PlaySoundEvent event) {
-        if (event.getSound() != null && event.getSound().getLocation().getNamespace().equals(LocalChainsaws.MODID)) {
-            LOG.info("[localchainsaws-clientcheck] sound {} at {} {} {}", event.getSound().getLocation(),
-                    Math.round(event.getSound().getX()), Math.round(event.getSound().getY()), Math.round(event.getSound().getZ()));
+        SoundInstance sound = event.getSound();
+        if (sound == null || !sound.getLocation().getNamespace().equals(LocalChainsaws.MODID)) return;
+        if (CHECK) {
+            LOG.info("[localchainsaws-clientcheck] sound {} at {} {} {}", sound.getLocation(),
+                    Math.round(sound.getX()), Math.round(sound.getY()), Math.round(sound.getZ()));
+        }
+        float factor = (float) ChainsawConfig.soundVolume();
+        if (factor < 1.0F && !(sound instanceof RevSound)) event.setSound(factor <= 0.0F ? null : new Quieter(sound, factor));
+    }
+
+    /** A sound played as is, only quieter. */
+    private record Quieter(SoundInstance sound, float factor) implements SoundInstance {
+        @Override public ResourceLocation getLocation() { return sound.getLocation(); }
+        @Override public WeighedSoundEvents resolve(SoundManager manager) { return sound.resolve(manager); }
+        @Override public Sound getSound() { return sound.getSound(); }
+        @Override public SoundSource getSource() { return sound.getSource(); }
+        @Override public boolean isLooping() { return sound.isLooping(); }
+        @Override public boolean isRelative() { return sound.isRelative(); }
+        @Override public int getDelay() { return sound.getDelay(); }
+        @Override public float getVolume() { return sound.getVolume() * factor; }
+        @Override public float getPitch() { return sound.getPitch(); }
+        @Override public double getX() { return sound.getX(); }
+        @Override public double getY() { return sound.getY(); }
+        @Override public double getZ() { return sound.getZ(); }
+        @Override public Attenuation getAttenuation() { return sound.getAttenuation(); }
+        @Override public boolean canStartSilent() { return sound.canStartSilent(); }
+        @Override public boolean canPlaySound() { return sound.canPlaySound(); }
+        @Override public java.util.concurrent.CompletableFuture<net.minecraft.client.sounds.AudioStream> getStream(
+                net.minecraft.client.sounds.SoundBufferLibrary buffers, Sound s, boolean looping) {
+            return sound.getStream(buffers, s, looping);
         }
     }
 
     /** How far along the wind-up a revving player is: 0 just pressed, 1 revved up (sawing). */
     static float windup(LivingEntity entity, float partialTick) {
-        return Mth.clamp((entity.getTicksUsingItem() + partialTick) / ChainsawCombat.WINDUP, 0.0F, 1.0F);
+        int windup = ChainsawConfig.windupTicks();
+        return windup <= 0 ? 1.0F : Mth.clamp((entity.getTicksUsingItem() + partialTick) / windup, 0.0F, 1.0F);
     }
 
     /**
@@ -135,8 +169,8 @@ public final class ChainsawClient {
             z = player.getZ();
             if (isRevving(player)) {
                 // In over the last 3 ticks of the wind-up, as the rev-up sound reaches the loop's revs.
-                int in = player.getTicksUsingItem() - (ChainsawCombat.WINDUP - 3);
-                volume = Mth.clamp(in * 0.25F, 0.0F, 0.9F);
+                int in = player.getTicksUsingItem() - (ChainsawConfig.windupTicks() - 3);
+                volume = Mth.clamp(in * 0.25F, 0.0F, 0.9F) * (float) ChainsawConfig.revLoopVolume();
                 if (CHECK && volume > 0 && !logged) {
                     logged = true;
                     LOG.info("[localchainsaws-clientcheck] revved up: rev loop audible for {} after {} ticks", player.getGameProfile().getName(),
