@@ -1,19 +1,19 @@
 package net.bdoyl.localchainsaws;
 
-import net.minecraftforge.common.ForgeConfigSpec;
-import net.minecraftforge.eventbus.api.IEventBus;
-import net.minecraftforge.fml.ModLoadingContext;
-import net.minecraftforge.fml.config.ModConfig;
-import net.minecraftforge.fml.event.config.ModConfigEvent;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.config.ModConfigEvent;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * The tuning numbers, so they can be changed without a new release.
  *
- * Server side: {@code <world>/serverconfig/localchainsaws-server.toml} (Forge creates it with the defaults on the first
- * start; a copy in {@code defaultconfigs/} seeds new worlds). Edits apply without a restart: Forge re-reads the file on
- * save, or, with ModernFix (which turns Forge's file watcher off, as on The Local), after {@code /mfsrc}. Players get the values when they join (only the wind-up length matters on their side, for the
+ * Server side: {@code <world>/serverconfig/localchainsaws-server.toml} (NeoForge creates it with the defaults on the first
+ * start; a copy in {@code defaultconfigs/} seeds new worlds). Edits apply without a restart: NeoForge re-reads the file
+ * on save (unless a mod such as ModernFix turns the file watcher off; then after its reload command, {@code /mfsrc}). Players get the values when they join (only the wind-up length matters on their side, for the
  * saw rising and the rev loop fading in), so after changing the wind-up they see the new timing from their next join.
  *
  * Client side: {@code config/localchainsaws-client.toml} on each player's own computer: how loud the chainsaw is.
@@ -34,15 +34,15 @@ public final class ChainsawConfig {
     static final int IRON_MAX_LOGS = 64, DIAMOND_MAX_LOGS = 128, NETHERITE_MAX_LOGS = 256;
     static final int LOW_DURABILITY_PERCENT = 10;
 
-    static final ForgeConfigSpec SERVER_SPEC;
-    static final ForgeConfigSpec CLIENT_SPEC;
-    private static final ForgeConfigSpec.DoubleValue reach, coneDegrees, revDpsFactor;
-    private static final ForgeConfigSpec.IntValue maxTargets, windupTicks, revIntervalTicks, cutTicks;
-    private static final ForgeConfigSpec.IntValue ironMaxLogs, diamondMaxLogs, netheriteMaxLogs, lowDurabilityPercent;
-    private static final ForgeConfigSpec.DoubleValue revLoopVolume, soundVolume;
+    static final ModConfigSpec SERVER_SPEC;
+    static final ModConfigSpec CLIENT_SPEC;
+    private static final ModConfigSpec.DoubleValue reach, coneDegrees, revDpsFactor;
+    private static final ModConfigSpec.IntValue maxTargets, windupTicks, revIntervalTicks, cutTicks;
+    private static final ModConfigSpec.IntValue ironMaxLogs, diamondMaxLogs, netheriteMaxLogs, lowDurabilityPercent;
+    private static final ModConfigSpec.DoubleValue revLoopVolume, soundVolume;
 
     static {
-        ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
+        ModConfigSpec.Builder b = new ModConfigSpec.Builder();
         b.comment("Holding right-click: the rev attack and revving into trees.").push("rev");
         reach = b.comment("How far the chain reaches, in blocks from the eyes to the nearest point of a hitbox or log (a normal hit reaches 3).")
                 .defineInRange("reach", REACH, 1.0, 6.0);
@@ -71,7 +71,7 @@ public final class ChainsawConfig {
         b.pop();
         SERVER_SPEC = b.build();
 
-        ForgeConfigSpec.Builder c = new ForgeConfigSpec.Builder();
+        ModConfigSpec.Builder c = new ModConfigSpec.Builder();
         c.comment("How loud the chainsaws are on this computer (on top of Minecraft's own Players volume slider).").push("sound");
         revLoopVolume = c.comment("The engine loop while someone holds right-click (0 = silent, 1 = full).")
                 .defineInRange("revLoopVolume", 1.0, 0.0, 1.0);
@@ -83,9 +83,9 @@ public final class ChainsawConfig {
 
     private ChainsawConfig() {}
 
-    static void register(IEventBus modBus) {
-        ModLoadingContext.get().registerConfig(ModConfig.Type.SERVER, SERVER_SPEC);
-        ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, CLIENT_SPEC);
+    static void register(IEventBus modBus, ModContainer container) {
+        container.registerConfig(ModConfig.Type.SERVER, SERVER_SPEC);
+        container.registerConfig(ModConfig.Type.CLIENT, CLIENT_SPEC);
         modBus.addListener((ModConfigEvent.Loading e) -> logValues(e.getConfig(), "loaded"));
         modBus.addListener((ModConfigEvent.Reloading e) -> logValues(e.getConfig(), "changed"));
     }
@@ -99,11 +99,11 @@ public final class ChainsawConfig {
                 netheriteMaxLogs(), lowDurabilityPercent());
     }
 
-    private static int get(ForgeConfigSpec spec, ForgeConfigSpec.IntValue v, int dflt) {
+    private static int get(ModConfigSpec spec, ModConfigSpec.IntValue v, int dflt) {
         return spec.isLoaded() ? v.get() : dflt;
     }
 
-    private static double get(ForgeConfigSpec spec, ForgeConfigSpec.DoubleValue v, double dflt) {
+    private static double get(ModConfigSpec spec, ModConfigSpec.DoubleValue v, double dflt) {
         return spec.isLoaded() ? v.get() : dflt;
     }
 

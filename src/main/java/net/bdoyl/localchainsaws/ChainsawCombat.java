@@ -11,7 +11,6 @@ import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
@@ -24,6 +23,7 @@ import net.minecraft.world.damagesource.DamageType;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.OwnableEntity;
@@ -41,10 +41,10 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.common.ForgeHooks;
-import net.minecraftforge.common.ToolActions;
-import net.minecraftforge.event.entity.living.LivingKnockBackEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.common.CommonHooks;
+import net.neoforged.neoforge.common.ItemAbilities;
+import net.neoforged.neoforge.event.entity.living.LivingKnockBackEvent;
 
 /**
  * The chainsaw as a weapon. A normal swing is a vanilla axe hit plus a rev sound and sparks/blood at the impact. Holding
@@ -64,10 +64,10 @@ public final class ChainsawCombat {
     // normal hit's 3 blocks at his request the same evening.
 
     static final ResourceKey<DamageType> CHAINSAW_DAMAGE =
-            ResourceKey.create(Registries.DAMAGE_TYPE, new ResourceLocation(LocalChainsaws.MODID, "chainsaw"));
+            ResourceKey.create(Registries.DAMAGE_TYPE, LocalChainsaws.id("chainsaw"));
     /** Mobs that get sparks but no blood (skeletons, golems, blazes...). */
     static final TagKey<EntityType<?>> BLOODLESS =
-            TagKey.create(Registries.ENTITY_TYPE, new ResourceLocation(LocalChainsaws.MODID, "bloodless"));
+            TagKey.create(Registries.ENTITY_TYPE, LocalChainsaws.id("bloodless"));
 
     private static LivingEntity revTarget; // server thread only: the entity a rev hit is being applied to right now
     private static final Map<ServerPlayer, Cut> CUTS = new WeakHashMap<>(); // server thread only: the log each player is sawing into
@@ -94,7 +94,7 @@ public final class ChainsawCombat {
     /** Right-click with a chainsaw: start the engine (main hand only; a shield in the off hand keeps blocking). */
     static boolean canStartRev(Player player, ItemStack stack, InteractionHand hand) {
         return hand == InteractionHand.MAIN_HAND && hasFuel(stack)
-                && !player.getOffhandItem().canPerformAction(ToolActions.SHIELD_BLOCK);
+                && !player.getOffhandItem().canPerformAction(ItemAbilities.SHIELD_BLOCK);
     }
 
     /** More than 1 durability left: the chainsaw never breaks from revving. */
@@ -226,12 +226,12 @@ public final class ChainsawCombat {
     /** One rev hit on one target; true if it landed (1 durability, food, sparks/blood). */
     private static boolean bite(ServerPlayer player, ItemStack stack, LivingEntity target) {
         if (!target.isAttackable() || target.skipAttackInteraction(player)) return false;
-        if (!ForgeHooks.onPlayerAttackTarget(player, target)) return false; // claims / protection mods said no
+        if (!CommonHooks.onPlayerAttackTarget(player, target)) return false; // claims / protection mods said no
 
-        float damage = revDamage(player, stack, target);
         ServerLevel level = player.serverLevel();
         DamageSource source = new DamageSource(level.registryAccess().registryOrThrow(Registries.DAMAGE_TYPE)
                 .getHolderOrThrow(CHAINSAW_DAMAGE), player);
+        float damage = revDamage(player, stack, target, source);
         // Rev hits come faster than the usual 10-tick hurt cooldown: let each one land, and leave the target's cooldown
         // as it was so the rev doesn't shield it from anyone else's hits either.
         int cooldown = target.invulnerableTime;
@@ -246,14 +246,18 @@ public final class ChainsawCombat {
         }
         if (!hurt) return false;
         player.causeFoodExhaustion(0.05F);
-        stack.hurtAndBreak(1, player, p -> p.broadcastBreakEvent(InteractionHand.MAIN_HAND));
+        stack.hurtAndBreak(1, player, EquipmentSlot.MAINHAND);
         impact(level, player, target, true);
         return true;
     }
 
-    /** Damage of one rev hit: (axe damage incl. Sharpness/Smite/Strength) x attack speed x factor / hits per second. */
-    static float revDamage(Player player, ItemStack stack, LivingEntity target) {
-        double perSwing = player.getAttributeValue(Attributes.ATTACK_DAMAGE) + EnchantmentHelper.getDamageBonus(stack, target.getMobType());
+    /**
+     * Damage of one rev hit: (axe damage incl. Sharpness/Smite/Strength) x attack speed x factor / hits per second. The
+     * enchantment bonus is what the (data-driven, 1.21) enchantments on the saw add against this target, as for a swing.
+     */
+    static float revDamage(ServerPlayer player, ItemStack stack, LivingEntity target, DamageSource source) {
+        float base = (float) player.getAttributeValue(Attributes.ATTACK_DAMAGE);
+        double perSwing = EnchantmentHelper.modifyDamage(player.serverLevel(), stack, target, source, base);
         double swingsPerSecond = player.getAttributeValue(Attributes.ATTACK_SPEED);
         return (float) (perSwing * swingsPerSecond * ChainsawConfig.revDpsFactor() * ChainsawConfig.revIntervalTicks() / 20.0);
     }

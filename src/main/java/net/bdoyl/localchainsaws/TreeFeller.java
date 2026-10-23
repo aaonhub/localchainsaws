@@ -7,18 +7,17 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import net.minecraft.advancements.Advancement;
+import net.minecraft.advancements.AdvancementHolder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.GlobalPos;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.stats.Stats;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
-import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -26,12 +25,12 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.common.util.FakePlayer;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.level.BlockEvent;
-import net.minecraftforge.eventbus.api.EventPriority;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.neoforged.bus.api.EventPriority;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.event.level.BlockEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 /**
  * Breaking a log of a natural tree with a chainsaw (not sneaking) fells the whole tree: every connected log of the same
@@ -108,8 +107,7 @@ public final class TreeFeller {
     }
 
     @SubscribeEvent
-    public static void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
+    public static void onServerTick(ServerTickEvent.Post event) {
         if (!REPLANTED.isEmpty()) {
             long now = event.getServer().getTickCount();
             REPLANTED.values().removeIf(until -> until <= now);
@@ -171,13 +169,13 @@ public final class TreeFeller {
             // Claims/protection mods can say no. If another mod fails on this break, stop cutting here but still drop
             // what was cut so far (below), instead of losing it or crashing.
             boolean[] refused = {false};
-            if (!Guard.run("felling", () -> refused[0] = MinecraftForge.EVENT_BUS.post(new BlockEvent.BreakEvent(level, pos, st, player)))) break;
+            if (!Guard.run("felling", () -> refused[0] = NeoForge.EVENT_BUS.post(new BlockEvent.BreakEvent(level, pos, st, player)).isCanceled())) break;
             if (refused[0]) continue;
             BlockEntity be = level.getBlockEntity(pos);
             drops.addAll(Block.getDrops(st, level, pos, be, player, tool));
             level.removeBlock(pos, false);
             level.levelEvent(2001, pos, Block.getId(st));
-            tool.hurtAndBreak(1, player, p -> p.broadcastBreakEvent(InteractionHand.MAIN_HAND));
+            tool.hurtAndBreak(1, player, EquipmentSlot.MAINHAND);
             player.awardStat(Stats.BLOCK_MINED.get(st.getBlock()));
             player.causeFoodExhaustion(0.005F);
             felled.add(pos);
@@ -205,7 +203,7 @@ public final class TreeFeller {
     static boolean award(ServerPlayer player, String advancement, String criterion) {
         if (recordAwards) AWARDS.merge(advancement, 1, Integer::sum);
         if (player instanceof FakePlayer) return false;
-        Advancement adv = player.server.getAdvancements().getAdvancement(new ResourceLocation(LocalChainsaws.MODID, advancement));
+        AdvancementHolder adv = player.server.getAdvancements().get(LocalChainsaws.id(advancement));
         return adv != null && player.getAdvancements().award(adv, criterion);
     }
 
@@ -291,7 +289,7 @@ public final class TreeFeller {
         for (ItemStack stack : drops) {
             if (!stack.is(ItemTags.SAPLINGS) || !(stack.getItem() instanceof BlockItem item)) continue;
             int have = 0;
-            for (ItemStack s : drops) if (ItemStack.isSameItemSameTags(s, stack)) have += s.getCount();
+            for (ItemStack s : drops) if (ItemStack.isSameItemSameComponents(s, stack)) have += s.getCount();
             List<BlockPos> spots = List.of(origin);
             if (have >= 4) {
                 List<BlockPos> square = square2x2(origin, felled);
@@ -300,7 +298,7 @@ public final class TreeFeller {
             int need = spots.size();
             for (ItemStack s : drops) {
                 if (need == 0) break;
-                if (ItemStack.isSameItemSameTags(s, stack)) need -= s.split(Math.min(need, s.getCount())).getCount();
+                if (ItemStack.isSameItemSameComponents(s, stack)) need -= s.split(Math.min(need, s.getCount())).getCount();
             }
             BlockState sapling = item.getBlock().defaultBlockState();
             List<BlockPos> plant = spots;
@@ -338,7 +336,7 @@ public final class TreeFeller {
             ItemStack rest = stack.copy();
             for (ItemStack have : out) {
                 if (rest.isEmpty()) break;
-                if (ItemStack.isSameItemSameTags(have, rest) && have.getCount() < have.getMaxStackSize()) {
+                if (ItemStack.isSameItemSameComponents(have, rest) && have.getCount() < have.getMaxStackSize()) {
                     int move = Math.min(rest.getCount(), have.getMaxStackSize() - have.getCount());
                     have.grow(move);
                     rest.shrink(move);

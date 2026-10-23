@@ -1,6 +1,7 @@
 # The Local Chainsaws
 
-Forge 1.20.1 mod (47.x) for The Local's server: iron, diamond and netherite chainsaws that fell whole trees.
+NeoForge 1.21.1 mod (21.1.x) for The Local's server: iron, diamond and netherite chainsaws that fell whole trees.
+(The Forge 1.20.1 version lives on the `main` branch; this is the `neoforge-1.21.1` branch, same version and behaviour.)
 Our own clean-room code, art and sound, MIT licensed.
 
 ## Gameplay
@@ -72,10 +73,10 @@ Our own clean-room code, art and sound, MIT licensed.
 
 ## Tuning
 
-All the numbers live in the world's **`serverconfig/localchainsaws-server.toml`** (Forge writes it with the defaults on
-the first start; put a copy in the server's `defaultconfigs/` to seed new worlds). Edits apply without a restart: Forge
-normally re-reads the file within seconds of a save, but with ModernFix installed (as on The Local) its file watcher is
-off, so run **`/mfsrc`** (op or server console; on The Local `~/bin/mc cmd mfsrc`) after saving. Either way the server
+All the numbers live in the world's **`serverconfig/localchainsaws-server.toml`** (NeoForge writes it with the defaults
+on the first start; put a copy in the server's `defaultconfigs/` to seed new worlds). Edits apply without a restart:
+NeoForge normally re-reads the file within seconds of a save; if ModernFix turns its file watcher off (as it did on the
+Forge 1.20.1 pack), run **`/mfsrc`** (op or server console; on The Local `~/bin/mc cmd mfsrc`) after saving. Either way the server
 log then shows `[localchainsaws] server config changed: reach 3.0, coneDegrees 45.0, ...`. Players pick up a new wind-up length (only
 used on their side for the saw rising and the loop fading in) when they next join.
 
@@ -111,9 +112,12 @@ never get advancements.
 
 ## Build
 
+ModDevGradle (`net.neoforged.moddev`), NeoForge 21.1.264, Java 21. On northstar build in the memory-capped container:
+`tools/gradle-docker.sh build` / `tools/gradle-docker.sh runGameTestServer` (JDK 21 from `~/opt`, `~/.gradle` shared).
+
 ```sh
-export JAVA_HOME=~/opt/jdk-17.0.20.1+1     # any JDK 17
-./gradlew build                            # -> build/libs/localchainsaws-1.20.1-<version>.jar
+export JAVA_HOME=~/opt/jdk-21.0.12.1+1     # any JDK 21
+./gradlew build                            # -> build/libs/localchainsaws-1.21.1-<version>.jar
 ./gradlew runGameTestServer                # 33 server-side tests: grow trees, cut them with a fake player, count drops;
                                            # swing / rev damage, wind-up, cone sweep and its 3-block / 45° /
                                            # 3-target limits, durability floor, rev vs. felling, log stripping and blocks,
@@ -134,6 +138,6 @@ particles it spawns per second; the
 headless two-client test uses it.
 
 The tests can also run inside a full modpack server: start it with
-`-Dlocalchainsaws.selftest=true` (Forge itself only registers gametests in a dev workspace, so this runs the same scenarios through `SelfTest`: trees in the sky around x=30000 z=30000, fake players, a `[localchainsaws-selftest] SUMMARY n/n passed` log line, then it stops the server; throwaway copies only)
+`-Dlocalchainsaws.selftest=true` (NeoForge itself only registers gametests in a dev workspace, so this runs the same scenarios through `SelfTest`: trees in the sky around x=30000 z=30000, fake players, a `[localchainsaws-selftest] SUMMARY n/n passed` log line, then it stops the server; throwaway copies only)
 With Tree Harvester present the sneaking test expects Tree
 Harvester to fell the tree exactly once.

@@ -10,6 +10,8 @@ import java.util.function.Predicate;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.data.worldgen.features.TreeFeatures;
 import net.minecraft.resources.ResourceKey;
@@ -31,7 +33,10 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.item.crafting.SmithingRecipeInput;
+import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
@@ -40,9 +45,10 @@ import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.common.util.FakePlayer;
-import net.minecraftforge.common.util.FakePlayerFactory;
-import net.minecraftforge.fml.ModList;
+import net.neoforged.fml.ModList;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.common.util.FakePlayerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,7 +111,10 @@ final class ChainsawScenarios {
         Fighter(ServerLevel level, String name, ItemStack tool) {
             super(level, new GameProfile(UUID.nameUUIDFromBytes(name.getBytes()), "[" + name + "]"));
             setItemInHand(InteractionHand.MAIN_HAND, tool);
-            getAttributes().addTransientAttributeModifiers(tool.getAttributeModifiers(EquipmentSlot.MAINHAND));
+            var modifiers = com.google.common.collect.ImmutableMultimap.<Holder<net.minecraft.world.entity.ai.attributes.Attribute>,
+                    net.minecraft.world.entity.ai.attributes.AttributeModifier>builder();
+            tool.getAttributeModifiers().forEach(EquipmentSlot.MAINHAND, modifiers::put);
+            getAttributes().addTransientAttributeModifiers(modifiers.build());
         }
 
         void charge() {
@@ -283,7 +292,7 @@ final class ChainsawScenarios {
         Pig walled = mobAt(h, EntityType.PIG, p, -2.0, 0);
         for (int y = 0; y < 3; y++) h.setBlock(BASE.offset(-1, y + 1, 0), Blocks.STONE);
         Wolf wolf = mobAt(h, EntityType.WOLF, p, 0.35, 0.75);
-        wolf.setTame(true);
+        wolf.setTame(true, true);
         wolf.setOwnerUUID(p.getUUID());
         ArmorStand stand = EntityType.ARMOR_STAND.create(h.level());
         stand.moveTo(p.getX() - 0.35, p.getY(), p.getZ() + 0.75);
@@ -593,6 +602,11 @@ final class ChainsawScenarios {
         });
     }
 
+    /** 1.21: enchantments are data-driven, so they are looked up in the world's registry. */
+    private static Holder<Enchantment> enchantment(TestArena h, ResourceKey<Enchantment> key) {
+        return h.level().registryAccess().registryOrThrow(Registries.ENCHANTMENT).getHolderOrThrow(key);
+    }
+
     private static void floor(TestArena h) {
         for (int x = 0; x < 21; x++) for (int z = 0; z < 21; z++) h.setBlock(new BlockPos(x, 0, z), Blocks.GRASS_BLOCK);
     }
@@ -620,7 +634,7 @@ final class ChainsawScenarios {
     }
 
     private static int dropped(TestArena h, Item item) {
-        AABB box = new AABB(h.abs(BlockPos.ZERO), h.abs(new BlockPos(21, 40, 21))).inflate(2);
+        AABB box = new AABB(Vec3.atLowerCornerOf(h.abs(BlockPos.ZERO)), Vec3.atLowerCornerOf(h.abs(new BlockPos(21, 40, 21)))).inflate(2);
         List<ItemEntity> items = h.level().getEntitiesOfClass(ItemEntity.class, box);
         return items.stream().filter(e -> e.getItem().is(item)).mapToInt(e -> e.getItem().getCount()).sum();
     }
@@ -671,7 +685,7 @@ final class ChainsawScenarios {
             LOG.info("[localchainsaws-test] {}: {} sapling(s) planted", tree.location().getPath(), planted);
             h.check(planted <= 4, planted + " saplings planted");
             int saplingsOnGround = h.level().getEntitiesOfClass(ItemEntity.class,
-                    new AABB(h.abs(BlockPos.ZERO), h.abs(new BlockPos(21, 40, 21))).inflate(2))
+                    new AABB(Vec3.atLowerCornerOf(h.abs(BlockPos.ZERO)), Vec3.atLowerCornerOf(h.abs(new BlockPos(21, 40, 21)))).inflate(2))
                     .stream().filter(e -> e.getItem().is(net.minecraft.tags.ItemTags.SAPLINGS)).mapToInt(e -> e.getItem().getCount()).sum();
             h.check(replanted || saplingsOnGround == 0, "saplings dropped but none was replanted");
             h.pass();
@@ -865,7 +879,7 @@ final class ChainsawScenarios {
         TreeFeller.recordAwards = true;
         var advancements = h.level().getServer().getAdvancements();
         for (String id : List.of("craft_chainsaw", "fell_tree")) {
-            h.check(advancements.getAdvancement(new net.minecraft.resources.ResourceLocation(LocalChainsaws.MODID, id)) != null,
+            h.check(advancements.get(LocalChainsaws.id(id)) != null,
                     "advancement localchainsaws:" + id + " is missing");
         }
         floor(h);
@@ -915,10 +929,11 @@ final class ChainsawScenarios {
         grow(h, TreeFeatures.OAK, BASE, 22);
         grow(h, TreeFeatures.BIRCH, BASE.offset(-6, 0, -6), 23);
         int oak = countBlocks(h, st -> st.is(Blocks.OAK_LOG)), birch = countBlocks(h, st -> st.is(Blocks.BIRCH_LOG));
+        Holder<Enchantment> fortuneEnch = enchantment(h, Enchantments.FORTUNE), silkEnch = enchantment(h, Enchantments.SILK_TOUCH);
         ItemStack fortune = new ItemStack(LocalChainsaws.NETHERITE_CHAINSAW.get());
-        fortune.enchant(net.minecraft.world.item.enchantment.Enchantments.BLOCK_FORTUNE, 3);
+        fortune.enchant(fortuneEnch, 3);
         ItemStack silk = new ItemStack(LocalChainsaws.NETHERITE_CHAINSAW.get());
-        silk.enchant(net.minecraft.world.item.enchantment.Enchantments.SILK_TOUCH, 1);
+        silk.enchant(silkEnch, 1);
         cut(h, player(h, "lcs-fortune", fortune, false), BASE);
         cut(h, player(h, "lcs-silk", silk, false), BASE.offset(-6, 0, -6));
         h.later(5, () -> {
@@ -930,8 +945,8 @@ final class ChainsawScenarios {
             h.check(gotBirch == birch, "Silk Touch should drop exactly one item per log: " + gotBirch + "/" + birch);
             h.check(leafBlocks == 0, "leaves should drop decay loot, not themselves (" + leafBlocks + " leaf blocks)");
             h.check(fortune.getDamageValue() == oak && silk.getDamageValue() == birch, "1 durability per log");
-            h.check(fortune.getEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.BLOCK_FORTUNE) == 3
-                    && silk.getEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.SILK_TOUCH) == 1, "enchantments kept");
+            h.check(EnchantmentHelper.getItemEnchantmentLevel(fortuneEnch, fortune) == 3
+                    && EnchantmentHelper.getItemEnchantmentLevel(silkEnch, silk) == 1, "enchantments kept");
             h.pass();
         });
     }
@@ -939,20 +954,21 @@ final class ChainsawScenarios {
     /** Upgrading at a smithing table keeps the diamond chainsaw's enchantments, name and wear (like vanilla tools). */
     static void smithingKeepsEnchantmentsAndWear(TestArena h) {
         ServerLevel level = h.level();
+        Holder<Enchantment> efficiency = enchantment(h, Enchantments.EFFICIENCY), unbreaking = enchantment(h, Enchantments.UNBREAKING);
         ItemStack diamond = new ItemStack(LocalChainsaws.DIAMOND_CHAINSAW.get());
-        diamond.enchant(net.minecraft.world.item.enchantment.Enchantments.BLOCK_EFFICIENCY, 5);
-        diamond.enchant(net.minecraft.world.item.enchantment.Enchantments.UNBREAKING, 3);
-        diamond.setHoverName(net.minecraft.network.chat.Component.literal("Old Faithful"));
+        diamond.enchant(efficiency, 5);
+        diamond.enchant(unbreaking, 3);
+        diamond.set(DataComponents.CUSTOM_NAME, net.minecraft.network.chat.Component.literal("Old Faithful"));
         diamond.setDamageValue(100);
-        net.minecraft.world.SimpleContainer table = new net.minecraft.world.SimpleContainer(
-                new ItemStack(Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE), diamond, new ItemStack(Items.NETHERITE_INGOT));
+        SmithingRecipeInput table = new SmithingRecipeInput(new ItemStack(Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE), diamond,
+                new ItemStack(Items.NETHERITE_INGOT));
         var recipe = level.getRecipeManager().getRecipeFor(net.minecraft.world.item.crafting.RecipeType.SMITHING, table, level);
         h.check(recipe.isPresent(), "no smithing recipe for template + diamond chainsaw + netherite ingot");
-        ItemStack out = recipe.get().assemble(table, level.registryAccess());
-        LOG.info("[localchainsaws-test] smithing: {} -> {} (damage {}, enchantments {})", diamond, out, out.getDamageValue(), out.getEnchantmentTags());
+        ItemStack out = recipe.get().value().assemble(table, level.registryAccess());
+        LOG.info("[localchainsaws-test] smithing: {} -> {} (damage {}, enchantments {})", diamond, out, out.getDamageValue(), out.getEnchantments());
         h.check(out.is(LocalChainsaws.NETHERITE_CHAINSAW.get()), "the result should be a netherite chainsaw, is " + out);
-        h.check(out.getEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.BLOCK_EFFICIENCY) == 5
-                && out.getEnchantmentLevel(net.minecraft.world.item.enchantment.Enchantments.UNBREAKING) == 3, "enchantments lost");
+        h.check(EnchantmentHelper.getItemEnchantmentLevel(efficiency, out) == 5
+                && EnchantmentHelper.getItemEnchantmentLevel(unbreaking, out) == 3, "enchantments lost");
         h.check(out.getHoverName().getString().equals("Old Faithful"), "name lost");
         h.check(out.getDamageValue() == 100, "wear should carry over (100), has " + out.getDamageValue());
         h.pass();
@@ -967,10 +983,10 @@ final class ChainsawScenarios {
     private static void addFailingListeners() {
         if (failingListeners) return;
         failingListeners = true;
-        net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener((net.minecraftforge.event.entity.living.LivingDeathEvent e) -> {
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.living.LivingDeathEvent e) -> {
             if (e.getEntity().getTags().contains(THROW_ON_DEATH)) throw new IllegalStateException("test: another mod failing on a death");
         });
-        net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener((net.minecraftforge.event.level.BlockEvent.BreakEvent e) -> {
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.level.BlockEvent.BreakEvent e) -> {
             if (THROW_ON_BREAK.contains(e.getPos())) throw new IllegalStateException("test: another mod failing on a block break");
         });
     }

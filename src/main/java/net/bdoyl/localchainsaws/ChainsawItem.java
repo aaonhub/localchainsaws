@@ -1,7 +1,6 @@
 package net.bdoyl.localchainsaws;
 
 import java.util.List;
-import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
@@ -18,8 +17,6 @@ import net.minecraft.world.item.Tier;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.client.extensions.common.IClientItemExtensions;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * A real axe (mines wood at axe speed, strips logs, takes axe enchantments) that also fells whole trees (see
@@ -29,9 +26,12 @@ import org.jetbrains.annotations.Nullable;
 public class ChainsawItem extends AxeItem {
     private final IntSupplier maxLogs;
 
-    /** {@code maxLogs}: the most logs one felling takes (from the server config, see {@link ChainsawConfig}). */
-    public ChainsawItem(Tier tier, float attackDamage, float attackSpeed, IntSupplier maxLogs, Properties props) {
-        super(tier, attackDamage, attackSpeed, props);
+    /**
+     * {@code maxLogs}: the most logs one felling takes (from the server config, see {@link ChainsawConfig}). The axe's
+     * attack damage and speed come in {@code props} (see LocalChainsaws#props).
+     */
+    public ChainsawItem(Tier tier, IntSupplier maxLogs, Properties props) {
+        super(tier, props);
         this.maxLogs = maxLogs;
     }
 
@@ -74,27 +74,25 @@ public class ChainsawItem extends AxeItem {
     }
 
     @Override
-    public int getUseDuration(ItemStack stack) {
-        return 72000; // as long as right-click is held
+    public int getUseDuration(ItemStack stack, LivingEntity entity) {
+        return USE_DURATION;
     }
+
+    /** As long as right-click is held. */
+    static final int USE_DURATION = 72000;
 
     @Override
     public void onUseTick(Level level, LivingEntity user, ItemStack stack, int remainingUseTicks) {
-        if (user instanceof ServerPlayer player) ChainsawCombat.revTick(player, stack, getUseDuration(stack) - remainingUseTicks);
+        if (user instanceof ServerPlayer player) ChainsawCombat.revTick(player, stack, USE_DURATION - remainingUseTicks);
     }
 
     @Override
     public void onStopUsing(ItemStack stack, LivingEntity entity, int count) {
-        if (entity instanceof ServerPlayer player) ChainsawCombat.revDown(player, getUseDuration(stack) - count);
+        if (entity instanceof ServerPlayer player) ChainsawCombat.revDown(player, USE_DURATION - count);
     }
 
     @Override
-    public void initializeClient(Consumer<IClientItemExtensions> consumer) {
-        consumer.accept(ChainsawClient.ITEM_EXTENSIONS);
-    }
-
-    @Override
-    public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
+    public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.translatable("item.localchainsaws.chainsaw.tooltip", maxLogs()).withStyle(ChatFormatting.GRAY));
         tooltip.add(Component.translatable("item.localchainsaws.chainsaw.tooltip.rev").withStyle(ChatFormatting.GRAY));
     }

@@ -1,11 +1,11 @@
 {
   "type": "minecraft:crafting_shaped",
   "category": "equipment",
-  "pattern": [" DR", "RSR", " S "],
+  "pattern": [" I ", " RS", " S "],
   "key": {
-    "D": {"item": "minecraft:diamond"},
+    "I": {"item": "minecraft:iron_ingot"},
     "R": {"item": "minecraft:redstone"},
     "S": {"item": "minecraft:string"}
   },
-  "result": {"item": "localchainsaws:diamond_chainsaw"}
+  "result": {"id": "localchainsaws:iron_chainsaw", "count": 1}
 }

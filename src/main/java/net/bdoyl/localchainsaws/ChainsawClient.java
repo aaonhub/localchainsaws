@@ -26,12 +26,13 @@ import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.client.event.RegisterParticleProvidersEvent;
-import net.minecraftforge.client.event.sound.PlaySoundEvent;
-import net.minecraftforge.client.extensions.common.IClientItemExtensions;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.eventbus.api.IEventBus;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
+import net.neoforged.neoforge.client.event.sound.PlaySoundEvent;
+import net.neoforged.neoforge.client.extensions.common.IClientItemExtensions;
+import net.neoforged.neoforge.client.extensions.common.RegisterClientExtensionsEvent;
+import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,8 +54,14 @@ public final class ChainsawClient {
 
     public static void init(IEventBus modBus) {
         modBus.addListener(ChainsawClient::registerParticles);
-        MinecraftForge.EVENT_BUS.addListener(ChainsawClient::onClientTick);
-        MinecraftForge.EVENT_BUS.addListener(ChainsawClient::onPlaySound);
+        modBus.addListener(ChainsawClient::registerItemExtensions);
+        NeoForge.EVENT_BUS.addListener(ChainsawClient::onClientTick);
+        NeoForge.EVENT_BUS.addListener(ChainsawClient::onPlaySound);
+    }
+
+    private static void registerItemExtensions(RegisterClientExtensionsEvent event) {
+        event.registerItem(ITEM_EXTENSIONS, LocalChainsaws.IRON_CHAINSAW.get(), LocalChainsaws.DIAMOND_CHAINSAW.get(),
+                LocalChainsaws.NETHERITE_CHAINSAW.get());
     }
 
     static boolean isRevving(LivingEntity entity) {
@@ -66,8 +73,7 @@ public final class ChainsawClient {
         event.registerSpriteSet(LocalChainsaws.BLOOD.get(), BloodParticle.Provider::new);
     }
 
-    private static void onClientTick(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
+    private static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         if (level == null) {

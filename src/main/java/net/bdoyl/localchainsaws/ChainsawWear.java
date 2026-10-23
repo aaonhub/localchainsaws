@@ -8,8 +8,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 
 /**
  * Tells a player when the chainsaw in their hand is wearing out: an action-bar line and the engine sputtering (only they
@@ -35,8 +35,8 @@ public final class ChainsawWear {
     private ChainsawWear() {}
 
     @SubscribeEvent
-    public static void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        if (event.phase == TickEvent.Phase.END && event.player instanceof ServerPlayer player) Guard.run("wear check", () -> check(player));
+    public static void onPlayerTick(PlayerTickEvent.Post event) {
+        if (event.getEntity() instanceof ServerPlayer player) Guard.run("wear check", () -> check(player));
     }
 
     /** Durability at or below which the "wearing out" warning comes, 0 = off. */

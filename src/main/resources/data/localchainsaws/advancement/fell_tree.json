@@ -1,7 +1,7 @@
 {
   "parent": "localchainsaws:craft_chainsaw",
   "display": {
-    "icon": {"item": "minecraft:oak_log"},
+    "icon": {"id": "minecraft:oak_log"},
     "title": {"translate": "advancements.localchainsaws.fell_tree.title"},
     "description": {"translate": "advancements.localchainsaws.fell_tree.description"},
     "frame": "task",
